@@ -19,13 +19,13 @@ import (
 type PullRequest struct {
 	Head struct {
 		User struct {
-			Login string `json:"login"`
-		} `json:"user"`
+			Login string
+		}
 		Repo struct {
 			SSHUrl string `json:"ssh_url"`
-		} `json:"repo"`
-		Ref string `json:"ref"`
-	} `json:"head"`
+		}
+		Ref string
+	}
 }
 
 func tweakUrl(url string) string {
@@ -49,13 +49,17 @@ func get(url string) PullRequest {
 		log.Fatal(err)
 	}
 	
-	var pullRequest PullRequest
-	err = json.Unmarshal(body, &pullRequest)
+	var pr PullRequest
+	err = json.Unmarshal(body, &pr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return pullRequest
+	if pr.Head.User.Login == "" || pr.Head.Repo.SSHUrl == "" || pr.Head.Ref == "" {
+		log.Fatalf("bad PullRequest: %s, JSON unmarshalling appears to have failed", pr)
+	}
+
+	return pr
 }
 
 func run(executable string, args ...string) string {
@@ -127,4 +131,5 @@ func main() {
 
 	fmt.Printf("Hijack of %s (%s/%s) progress.\n", url, user, ref)
 	fmt.Println("`git commit` your changes and then run `hijack land`")
+	fmt.Println("to remove all traces of this tool, run `hijack cleanup`")
 }
