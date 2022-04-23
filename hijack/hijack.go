@@ -38,7 +38,6 @@ func tweakUrl(url string) string {
 }
 
 func get(url string) PullRequest {
-	fmt.Println(url)
 	response, err := http.Get(url)
 	defer response.Body.Close()
 	if err != nil {
@@ -65,19 +64,38 @@ func run(executable string, args ...string) string {
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("the command `%s %s` failed: %s", executable, args, err)
 	}
-	return out.String()
+	return strings.TrimRight(out.String(), "\n")
 }
 
 func main() {
 	if len(os.Args) == 0 {
 		log.Fatalf("usage: hijack http://github.com/repos/ORG/REPO/pulls/123")
 	}
-	if os.Args[1] == "push" {
-		log.Fatal("push not implemented yet")
+
+	currentBranch := run("git", "branch", "--show-current")
+	out := run("git", "rev-parse", "--abbrev-ref", "HEAD@{upstream}")
+	split := strings.Split(out, "/")
+	remote := split[0]
+	remoteBranch := split[1]
+
+	if os.Args[1] == "land" {
+		run("git", "push", remote, fmt.Sprintf("%s:%s", currentBranch, remoteBranch))
+		fmt.Println("MISSION ACCOMPLISHED!!")
+		return
+	} else if os.Args[1] == "cleanup" {
+		//
+		// Cleanup to prevent remotes and branches from piling up
+		//
+		run("git", "checkout", "HEAD", "--detach")
+		run("git", "branch", "--delete", currentBranch)
+		run("git", "remote", "remove", remote)
+		fmt.Println("cleanup complete")
 		return
 	}
+
+	// TODO: check if a hijack is already in progress
 
 	url := tweakUrl(os.Args[1])
 	pullRequest := get(url)
@@ -107,5 +125,6 @@ func main() {
 	//
 	run("git", "branch", "--set-upstream-to", upstream)
 
-	fmt.Println("Hijack in progress.  `git commit` your changes and then run `hijack push` to land")
+	fmt.Printf("Hijack of %s (%s/%s) progress.\n", url, user, ref)
+	fmt.Println("`git commit` your changes and then run `hijack land`")
 }
