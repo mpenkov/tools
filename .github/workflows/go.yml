@@ -7,7 +7,6 @@ on:
     branches: [ master ]
 
 jobs:
-      
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -17,6 +16,7 @@ jobs:
           - subdir: kot
           - subdir: koshka
           - subdir: planner
+          - subdir: shin
     steps:
     - uses: actions/checkout@v3
 
