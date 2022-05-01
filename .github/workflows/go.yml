@@ -25,10 +25,10 @@ jobs:
       with:
         go-version: 1.18
 
+    - run: mkdir bin
+
     - name: Build ${{ matrix.subdir }}
-      run: go build -v
-      working-directory: ${{ matrix.subdir }}
+      run: go build -v -o bin github.com/mpenkov/tools/${{ matrix.subdir }}
 
     - name: Test ${{ matrix.subdir }}
-      run: go test -v
-      working-directory: ${{ matrix.subdir }}
+      run: go test -v github.com/mpenkov/tools/${{ matrix.subdir }}
