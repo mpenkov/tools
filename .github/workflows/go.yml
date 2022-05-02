@@ -28,7 +28,9 @@ jobs:
     - run: mkdir bin
 
     - name: Build ${{ matrix.subdir }}
-      run: go build -v -o bin github.com/mpenkov/tools/${{ matrix.subdir }}
+      run: go build -v -o bin
+      working-directory: ${{ matrix.subdir }}
 
     - name: Test ${{ matrix.subdir }}
-      run: go test -v github.com/mpenkov/tools/${{ matrix.subdir }}
+      run: go test -v
+      working-directory: ${{ matrix.subdir }}
