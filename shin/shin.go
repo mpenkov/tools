@@ -6,7 +6,7 @@
 // TODO:
 //
 // - [ ] handle different AWS config profiles
-// - [ ] handle EC2 instance tag names
+// - [x] handle EC2 instance tag names
 // - [x] update local ~/.ssh/config with instance info so you can just directly SSH into it
 // - [x] parameterize username (e.g. don't hardcode "ubuntu")
 //
@@ -20,7 +20,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -33,12 +35,25 @@ func findInstance(instanceId string) (ec2types.Instance, error) {
 		log.Fatal(err)
 	}
 	client := ec2.NewFromConfig(config)
-	params := ec2.DescribeInstancesInput{InstanceIds: []string{instanceId}}
-	output, err := client.DescribeInstances(ctx, &params)
-	if err != nil {
+
+	if strings.HasPrefix(instanceId, "i-") {
+		params := ec2.DescribeInstancesInput{InstanceIds: []string{instanceId}}
+		output, err := client.DescribeInstances(ctx, &params)
+		if err == nil {
+			return output.Reservations[0].Instances[0], nil
+		}
 		return ec2types.Instance{}, err
 	}
-	return output.Reservations[0].Instances[0], nil
+
+	// Try lookup by name
+	filter := ec2types.Filter{Name: aws.String("tag:Name"), Values: []string{instanceId}}
+	params := ec2.DescribeInstancesInput{Filters: []ec2types.Filter{filter}}
+	output, err := client.DescribeInstances(ctx, &params)
+	if err == nil {
+		return output.Reservations[0].Instances[0], nil
+	}
+
+	return ec2types.Instance{}, err
 }
 
 func register(instance ec2types.Instance, alias, username string) error {
@@ -54,6 +69,9 @@ func register(instance ec2types.Instance, alias, username string) error {
 	}
 
 	identityFilePath := os.ExpandEnv("$IDENTITY_FILE_PATH")
+	if len(identityFilePath) == 0 {
+		return fmt.Errorf("bad IDENTITY_FILE_PATH: %q", identityFilePath)
+	}
 
 	var buf bytes.Buffer
 	buf.WriteString("\n# <shin>\n")
@@ -77,17 +95,25 @@ func register(instance ec2types.Instance, alias, username string) error {
 
 }
 
-func ssh(ip string, username string) error {
+func ssh(ip string, username string, writeKnownHosts bool) error {
 	userAtHost := fmt.Sprintf("%s@%s", username, ip)
+
 	identityFilePath := os.ExpandEnv("$IDENTITY_FILE_PATH")
-	command := exec.Command(
-		"ssh",
+	if len(identityFilePath) == 0 {
+		return fmt.Errorf("bad IDENTITY_FILE_PATH: %q", identityFilePath)
+	}
+
+	params := []string{
 		userAtHost,
 		"-i",
 		identityFilePath,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-    )
+		"-o", "StrictHostKeyChecking=no",
+	}
+	if !writeKnownHosts {
+		params = append(params, "-o", "UserKnownHostsFile=/dev/null")
+	}
+
+	command := exec.Command("ssh", params...)
 	command.Stdout = os.Stdout
 	command.Stdin = os.Stdin
 	command.Stderr = os.Stderr
@@ -98,6 +124,7 @@ func ssh(ip string, username string) error {
 func main() {
 	var doNotConnect bool
 	var registerHost bool
+	var writeKnownHosts bool
 	var registerAlias string
 	var username string
 
@@ -107,6 +134,7 @@ func main() {
 	//
 	flag.BoolVar(&doNotConnect, "dnc", false, "do not actually connect to the instance")
 	flag.BoolVar(&registerHost, "register", false, "register the instance instance in ~/.ssh/config")
+	flag.BoolVar(&writeKnownHosts, "known", false, "write the fingerprint to ~/.ssh/known_hosts during initial connection")
 	flag.StringVar(&registerAlias, "alias", "", "override the alias to register")
 	flag.StringVar(&username, "username", "ubuntu", "the username to use for the connection")
 	flag.Parse()
@@ -121,7 +149,7 @@ func main() {
 	}
 
 	if !doNotConnect {
-		err := ssh(*instance.PublicIpAddress, username)
+		err := ssh(*instance.PublicIpAddress, username, writeKnownHosts)
 		if err != nil {
 			log.Fatal(err)
 		}
