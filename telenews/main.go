@@ -3,12 +3,15 @@
 // TODO:
 //
 // - [ ] Pagination
-// - [ ] Output HTML instead of text
+// - [x] Output HTML instead of text
+// - [ ] Use proper Golang templates when outputting HTML
+// - [ ] Extract headlines (first line in the message) and mark them up with CSS
 // - [ ] Output media files when available
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
 // - [ ] Markup for hyperlinks, etc. - why isn't this already in the message text?
 // - [ ] Parametrize threshold for old news
+// - [ ] Exclude cross-posts between covered channels
 //
 package main
 
@@ -35,21 +38,47 @@ import (
 )
 
 type Item struct {
-	Domain string
-	MessageID int
+	Domain       string
+	MessageID    int
 	ChannelTitle string
-	Text string
-	Date string
+	Text         string
+	Date         time.Time
 }
 
 func output(items []Item) {
+	fmt.Println("<!DOCTYPE html>")
+	fmt.Println("<html>")
+	fmt.Println("<head><style>")
+	fmt.Println("body { font-family: Helvetica; }")
+	fmt.Println(".item-list { display: grid; grid-gap: 15px; }")
+	fmt.Println(".item { display: grid; grid-template-columns: 100px 200px 800px; border-top: 1px solid gray}")
+	fmt.Println("p:nth-child(1) { font-weight: bold; font-size: large }")
+	fmt.Println(".channel { font-size: large; font-weight: bold }")
+	fmt.Println(".datestamp { font-size: x-large; font-weight: bold; font-color: gray }")
+	fmt.Println("</style></head>")
+	fmt.Println("<body><div class='item-list'>")
 	for _, item := range items {
-		fmt.Println(fmt.Sprintf("[%s] %s (tg://resolve?domain=%s&post=%d)", item.Date, item.ChannelTitle, item.Domain, item.MessageID))
-		fmt.Println()
-		fmt.Println(item.Text)
-		fmt.Println("\n---")
-		fmt.Println()
+		dateStr := item.Date.Format("15:04")
+		msgUrl := fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID)
+
+		fmt.Println("<span class='item'>")
+		fmt.Println(fmt.Sprintf("<span class='datestamp'>%s</span>", dateStr))
+		fmt.Println(fmt.Sprintf("<span class='channel'><a href='%s'>@%s</a></span>", msgUrl, item.Domain))
+		fmt.Println(fmt.Sprintf("<span class='message'>%s</span>", markup(item.Text)))
+		fmt.Println("</span>")
 	}
+	fmt.Println("</div></body></html>")
+}
+
+func markup(message string) string {
+	paragraphs := strings.Split(message, "\n\n")
+	// FIXME: very inefficient string concatenation
+	// TODO: try harder to split the first paragraph, maybe try a sentence split?
+	nonono := ""
+	for _, p := range paragraphs {
+		nonono = nonono + "<p>" + p + "</p>\n"
+	}
+	return nonono
 }
 
 // noSignUp can be embedded to prevent signing up.
@@ -146,17 +175,17 @@ func decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err er
 		if err != nil {
 			return messages, fmt.Errorf("MessagesChannelMessages failed to decode: %w", err)
 		}
-		innerMessages = inner.Messages	
+		innerMessages = inner.Messages
 	case *tg.MessagesMessagesSlice:
 		var inner tg.MessagesMessagesSlice
 		err = inner.Decode(&buffer)
 		if err != nil {
 			return messages, fmt.Errorf("MessagesMessagesSlice failed to decode: %w", err)
 		}
-		innerMessages = inner.Messages	
+		innerMessages = inner.Messages
 	}
 
-	for _, m := range(innerMessages) {
+	for _, m := range innerMessages {
 		//
 		// If stuff fails to decode here, then just ignore the message
 		//
@@ -247,7 +276,7 @@ func main() {
 					continue
 				}
 
-				if folder.Title == "News" {	
+				if folder.Title == "News" {
 					for _, ip := range folder.IncludePeers {
 						channel, err := decodeChannel(ip)
 						if err != nil {
@@ -266,7 +295,7 @@ func main() {
 						if err != nil {
 							log.Error(fmt.Sprintf("MessagesGetHistory failed: %s", err))
 							continue
-						} 
+						}
 
 						messages, err := decodeMessages(history)
 						if err != nil {
@@ -275,7 +304,7 @@ func main() {
 							continue
 						}
 
-						thresholdDate := time.Now().Unix() - 24 * 3600
+						thresholdDate := time.Now().Unix() - 24*3600
 
 						for _, m := range messages {
 							if int64(m.Date) < thresholdDate {
@@ -284,13 +313,12 @@ func main() {
 							}
 							// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
 							tm := time.Unix(int64(m.Date), 0)
-							dateStr := tm.Format("2006-01-02 15:04:05")
 							item := Item{
-								Domain: channelDomain,
-								MessageID: m.ID,
-								ChannelTitle: channelTitle, 
-								Text: m.Message,
-								Date: dateStr,
+								Domain:       channelDomain,
+								MessageID:    m.ID,
+								ChannelTitle: channelTitle,
+								Text:         m.Message,
+								Date:         tm,
 							}
 							items = append(items, item)
 						}
@@ -298,8 +326,8 @@ func main() {
 				}
 			}
 
-			sort.Slice(items, func (i, j int) bool {
-				return items[i].Date < items[j].Date
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Date.Unix() < items[j].Date.Unix()
 			})
 			output(items)
 
