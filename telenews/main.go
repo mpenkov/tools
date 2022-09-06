@@ -12,6 +12,7 @@
 // - [ ] Markup for hyperlinks, etc. - why isn't this already in the message text?
 // - [ ] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels
+// - [ ] Keyboard shortcuts (j/k, etc)
 //
 package main
 
@@ -54,7 +55,7 @@ func output(items []Item) {
 	fmt.Println(".item { display: grid; grid-template-columns: 100px 200px 800px; border-top: 1px solid gray}")
 	fmt.Println("p:nth-child(1) { font-weight: bold; font-size: large }")
 	fmt.Println(".channel { font-size: large; font-weight: bold }")
-	fmt.Println(".datestamp { font-size: x-large; font-weight: bold; font-color: gray }")
+	fmt.Println(".datestamp { font-size: xx-large; font-weight: bold; color: gray }")
 	fmt.Println("</style></head>")
 	fmt.Println("<body><div class='item-list'>")
 	for _, item := range items {
@@ -310,6 +311,22 @@ func main() {
 							if int64(m.Date) < thresholdDate {
 								// old news from over 24 hours ago
 								continue
+							}
+							if m.Media != nil {
+								log.Debug("attachment: " + m.Media.TypeName())
+
+								switch messageMedia := m.Media.(type) {
+								case *tg.MessageMediaPhoto:
+									switch photo := messageMedia.Photo.(type) {
+									case *tg.Photo:
+										log.Debug(photo.String())
+										// TODO: do something with this thing
+										// https://core.telegram.org/api/files#downloading-files
+										// Where do we store these files?  In a local dir, or embedded into the HTML?
+										break
+									}
+									break
+								}
 							}
 							// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
 							tm := time.Unix(int64(m.Date), 0)
