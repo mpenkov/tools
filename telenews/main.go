@@ -34,8 +34,6 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
-
-	"github.com/gotd/td/bin"
 )
 
 type Item struct {
@@ -122,84 +120,38 @@ func (a termAuth) Code(_ context.Context, _ *tg.AuthSentCode) (string, error) {
 	return strings.TrimSpace(code), nil
 }
 
-func decodeFolder(dfc tg.DialogFilterClass) (tg.DialogFilter, error) {
-	var buf bin.Buffer
-	var folder tg.DialogFilter
-
-	err := dfc.Encode(&buf)
-	if err != nil {
-		return folder, err
-	}
-
-	err = folder.Decode(&buf)
-	if err != nil {
-		return folder, err
-	}
-
-	return folder, nil
-}
-
 func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, err error) {
-	var buffer bin.Buffer
-	var inputPeerChannel tg.InputPeerChannel
-
-	err = inputPeerClass.Encode(&buffer)
-	if err != nil {
-		return channel, err
+	switch inputPeerChannel := inputPeerClass.(type) {
+	case *tg.InputPeerChannel:
+		channel.ChannelID = inputPeerChannel.ChannelID
+		channel.AccessHash = inputPeerChannel.AccessHash
+	default:
+		err = fmt.Errorf("decodeChannel failed")
 	}
-
-	err = inputPeerChannel.Decode(&buffer)
-	if err != nil {
-		return channel, err
-	}
-
-	channel.ChannelID = inputPeerChannel.ChannelID
-	channel.AccessHash = inputPeerChannel.AccessHash
-
 	return channel, nil
 }
 
 func decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
-	var buffer bin.Buffer
-
-	err = mmc.Encode(&buffer)
-	if err != nil {
-		return messages, fmt.Errorf("MessagesMessagesClass failed to encode: %w", err)
-	}
-
 	var innerMessages []tg.MessageClass
 
-	switch mmc.(type) {
+	switch inner := mmc.(type) {
 	case *tg.MessagesChannelMessages:
-		var inner tg.MessagesChannelMessages
-		err = inner.Decode(&buffer)
-		if err != nil {
-			return messages, fmt.Errorf("MessagesChannelMessages failed to decode: %w", err)
-		}
 		innerMessages = inner.Messages
+		break
 	case *tg.MessagesMessagesSlice:
-		var inner tg.MessagesMessagesSlice
-		err = inner.Decode(&buffer)
-		if err != nil {
-			return messages, fmt.Errorf("MessagesMessagesSlice failed to decode: %w", err)
-		}
 		innerMessages = inner.Messages
+		break
 	}
 
 	for _, m := range innerMessages {
 		//
 		// If stuff fails to decode here, then just ignore the message
 		//
-		var legitMessage tg.Message
-		ignoreErr := m.Encode(&buffer)
-		if ignoreErr != nil {
-			continue
+		switch message := m.(type) {
+		case *tg.Message:
+			messages = append(messages, *message)
+			break
 		}
-		ignoreErr = legitMessage.Decode(&buffer)
-		if ignoreErr != nil {
-			continue
-		}
-		messages = append(messages, legitMessage)
 	}
 
 	return messages, err
@@ -207,33 +159,17 @@ func decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err er
 
 func getChannelInfo(input tg.InputChannel, client *tg.Client, ctx context.Context) (string, string, error) {
 	var result *tg.MessagesChatFull
-	var buf bin.Buffer
 
 	result, err := client.ChannelsGetFullChannel(ctx, &input)
 	if err != nil {
 		return "", "", err
 	}
 
-	err = result.Chats[0].Encode(&buf)
-	if err != nil {
-		return "", "", err
-	}
-
-	switch result.Chats[0].(type) {
+	switch thing := result.Chats[0].(type) {
 	case *tg.Chat:
-		var chat tg.Channel
-		err = chat.Decode(&buf)
-		if err != nil {
-			return "", "", err
-		}
-		return chat.Title, "", nil
+		return thing.Title, "", nil
 	case *tg.Channel:
-		var channel tg.Channel
-		err = channel.Decode(&buf)
-		if err != nil {
-			return "", "", err
-		}
-		return channel.Title, channel.Username, nil
+		return thing.Title, thing.Username, nil
 	}
 
 	return "", "", fmt.Errorf("not implemented yet")
@@ -271,9 +207,14 @@ func main() {
 			}
 
 			for _, dfc := range folders {
-				folder, err := decodeFolder(dfc)
-				if err != nil {
-					log.Error(fmt.Sprintf("unable to decodeFolder: %s", err))
+				var folder tg.DialogFilter
+				ok := false
+				switch f := dfc.(type) {
+					case *tg.DialogFilter:
+						folder = *f
+						ok = true
+				}
+				if !ok {
 					continue
 				}
 
