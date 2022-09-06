@@ -5,7 +5,7 @@
 // - [ ] Pagination
 // - [x] Output HTML instead of text
 // - [ ] Use proper Golang templates when outputting HTML
-// - [ ] Extract headlines (first line in the message) and mark them up with CSS
+// - [x] Extract headlines (first line in the message) and mark them up with CSS
 // - [ ] Output media files when available
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
@@ -42,6 +42,7 @@ type Item struct {
 	ChannelTitle string
 	Text         string
 	Date         time.Time
+	Webpage      *tg.WebPage
 }
 
 func output(items []Item) {
@@ -57,25 +58,40 @@ func output(items []Item) {
 	fmt.Println("</style></head>")
 	fmt.Println("<body><div class='item-list'>")
 	for _, item := range items {
+		if len(item.Text) == 0 && item.Webpage == nil {
+			//
+			// Empty message?  Why is it empty?  Hide these from the output for now.
+			//
+			continue
+		}
 		dateStr := item.Date.Format("15:04")
 		msgUrl := fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID)
 
 		fmt.Println("<span class='item'>")
 		fmt.Println(fmt.Sprintf("<span class='datestamp'>%s</span>", dateStr))
 		fmt.Println(fmt.Sprintf("<span class='channel'><a href='%s'>@%s</a></span>", msgUrl, item.Domain))
-		fmt.Println(fmt.Sprintf("<span class='message'>%s</span>", markup(item.Text)))
-		fmt.Println("</span>")
+		fmt.Println(fmt.Sprintf("<span class='message'>%s", markup(item.Text)))
+		if item.Webpage != nil {
+			fmt.Println("<blockquote class='webpage'>")
+			fmt.Println(fmt.Sprintf("<span class='link'><a href='%s'>%s</a></span>", item.Webpage.URL, item.Webpage.Title))
+			fmt.Println(fmt.Sprintf("<span class='description'>%s</span>", markup(item.Webpage.Description)))
+			fmt.Println("</blockquote>")
+		}
+		fmt.Println("</span>") // message
+		fmt.Println("</span>") // item
 	}
 	fmt.Println("</div></body></html>")
 }
 
 func markup(message string) string {
-	paragraphs := strings.Split(message, "\n\n")
+	paragraphs := strings.Split(message, "\n")
 	// FIXME: very inefficient string concatenation
 	// TODO: try harder to split the first paragraph, maybe try a sentence split?
 	nonono := ""
 	for _, p := range paragraphs {
-		nonono = nonono + "<p>" + p + "</p>\n"
+		if len(p) > 0 {
+			nonono = nonono + "<p>" + p + "</p>\n"
+		}
 	}
 	return nonono
 }
@@ -131,7 +147,8 @@ func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, e
 	return channel, nil
 }
 
-func decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
+func decodeMessages(log *zap.Logger, mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
+	log.Debug(fmt.Sprintf("mmc.TypeName = %s", mmc.TypeName()))
 	var innerMessages []tg.MessageClass
 
 	switch inner := mmc.(type) {
@@ -144,9 +161,8 @@ func decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err er
 	}
 
 	for _, m := range innerMessages {
-		//
-		// If stuff fails to decode here, then just ignore the message
-		//
+		log.Debug(fmt.Sprintf("m.TypeName = %s", m.TypeName()))
+		log.Debug(m.String())
 		switch message := m.(type) {
 		case *tg.Message:
 			messages = append(messages, *message)
@@ -210,9 +226,9 @@ func main() {
 				var folder tg.DialogFilter
 				ok := false
 				switch f := dfc.(type) {
-					case *tg.DialogFilter:
-						folder = *f
-						ok = true
+				case *tg.DialogFilter:
+					folder = *f
+					ok = true
 				}
 				if !ok {
 					continue
@@ -239,7 +255,7 @@ func main() {
 							continue
 						}
 
-						messages, err := decodeMessages(history)
+						messages, err := decodeMessages(log, history)
 						if err != nil {
 							// log.Debug(history.String())
 							log.Error(fmt.Sprintf("decodeMessages of type %q for channel %q failed: %s", history.TypeName(), channelTitle, err))
@@ -253,6 +269,8 @@ func main() {
 								// old news from over 24 hours ago
 								continue
 							}
+							var webpage *tg.WebPage
+
 							if m.Media != nil {
 								log.Debug("attachment: " + m.Media.TypeName())
 
@@ -267,6 +285,13 @@ func main() {
 										break
 									}
 									break
+								case *tg.MessageMediaWebPage:
+									// Quoting another telegram channel?
+									switch wp := messageMedia.Webpage.(type) {
+									case *tg.WebPage:
+										webpage = wp
+										break
+									}
 								}
 							}
 							// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
@@ -277,8 +302,10 @@ func main() {
 								ChannelTitle: channelTitle,
 								Text:         m.Message,
 								Date:         tm,
+								Webpage:      webpage,
 							}
 							items = append(items, item)
+							log.Info(fmt.Sprintf("handled MessageID %d (%s) from Domain %s (%d char)", item.MessageID, item.Date, item.Domain, len(item.Text)))
 						}
 					}
 				}
