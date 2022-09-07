@@ -4,7 +4,7 @@
 //
 // - [ ] Pagination
 // - [x] Output HTML instead of text
-// - [ ] Use proper Golang templates when outputting HTML
+// - [.] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
 // - [.] Output media files when available (photos, caching, etc)
 // - [ ] Embed images into the HTML so that it is fully self-contained
@@ -25,6 +25,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -45,7 +46,9 @@ type Item struct {
 	Text         string
 	Date         time.Time
 	Webpage      *tg.WebPage
+	HasWebpage   bool
 	Images       []string
+	HasImages    bool
 }
 
 //
@@ -57,51 +60,62 @@ type WorkArea struct {
 	Client  *tg.Client
 }
 
-func output(items []Item) {
-	fmt.Println("<!DOCTYPE html>")
-	fmt.Println("<html>")
-	fmt.Println("<head><style>")
-	fmt.Println("body { font-family: Helvetica; }")
-	fmt.Println(".item-list { display: grid; grid-gap: 15px; }")
-	fmt.Println(".item { display: grid; grid-template-columns: 100px 200px 800px 300px; border-top: 1px solid gray}")
-	fmt.Println("p:nth-child(1) { font-weight: bold; font-size: large }")
-	fmt.Println(".channel { font-size: large; font-weight: bold }")
-	fmt.Println(".datestamp { font-size: xx-large; font-weight: bold; color: gray }")
-	fmt.Println("</style></head>")
-	fmt.Println("<body><div class='item-list'>")
-	for _, item := range items {
-		if len(item.Text) == 0 && item.Webpage == nil {
-			//
-			// Empty message?  Why is it empty?  Hide these from the output for now.
-			//
-			continue
-		}
-		dateStr := item.Date.Format("15:04")
-		msgUrl := fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID)
-
-		fmt.Println("<span class='item'>")
-		fmt.Println(fmt.Sprintf("<span class='datestamp'>%s</span>", dateStr))
-		fmt.Println(fmt.Sprintf("<span class='channel'><a href='%s'>@%s</a></span>", msgUrl, item.Domain))
-		fmt.Println(fmt.Sprintf("<span class='message'>%s", markup(item.Text)))
-		if item.Webpage != nil {
-			fmt.Println("<blockquote class='webpage'>")
-			fmt.Println(fmt.Sprintf("<span class='link'><a href='%s'>%s</a></span>", item.Webpage.URL, item.Webpage.Title))
-			fmt.Println(fmt.Sprintf("<span class='description'>%s</span>", markup(item.Webpage.Description)))
-			fmt.Println("</blockquote>")
-		}
-		fmt.Println("</span>") // message
-
-		if len(item.Images) > 0 {
-			fmt.Println("<span class='images'>")
-			for _, img := range item.Images {
-				fmt.Println(fmt.Sprintf("<img src=%q></img>", img))
+const templ = `
+<!DOCTYPE html>
+<html>
+	<head>
+		<style>
+			body { font-family: Helvetica; }
+			.item-list { display: grid; grid-gap: 15px; }
+			.item { 
+				display: grid; 
+				grid-template-columns: 100px 200px 800px 300px;
+				border-top: 1px solid gray;
 			}
-			fmt.Println("</span>")
-		}
-		fmt.Println("</span>") // item
-	}
-	fmt.Println("</div></body></html>")
+			p:nth-child(1) { font-weight: bold; font-size: large }
+			.channel { font-size: large; font-weight: bold }
+			.datestamp { font-size: xx-large; font-weight: bold; color: gray }
+		</style>
+	</head>
+	<body>
+		<div class='item-list'>
+			{{range .Items}}
+			<span class='item'>
+				<span class='datestamp'>{{.Date | formatDate}}</span>
+				<span class='channel'><a href={{. | tgUrl}}>@{{.Domain}}</a></span>
+				<span class='message'>
+					{{.Text | markup}}
+				{{if .HasWebpage}}
+					<blockquote class='webpage'>
+						<span class='link'><a href='{{.Webpage.URL}}'>{{.Webpage.Title}}</a></span>
+						<span class='description'>{{.Webpage.Description | markup}}</span>
+					</blockquote>
+				{{end}}
+				{{if .HasImages}}
+				<span class='images'>
+					{{range .Images}}
+						<img src='{{.}}'></img>
+					{{end}}
+				</span>
+				{{end}}
+				</span>
+			</span>
+			{{end}}
+		</div>
+	</body>
+</html>
+`
+
+func formatDate(date time.Time) string {
+	return date.Format("15:04")
 }
+
+func tgUrl(item Item) string {
+	return fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID)
+}
+
+var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup}
+var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
 func markup(message string) string {
 	paragraphs := strings.Split(message, "\n")
@@ -282,11 +296,13 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
 	tm := time.Unix(int64(m.Date), 0)
 	item := Item{
-		MessageID: m.ID,
-		Text:      m.Message,
-		Date:      tm,
-		Webpage:   webpage,
-		Images:    images,
+		MessageID:  m.ID,
+		Text:       m.Message,
+		Date:       tm,
+		Webpage:    webpage,
+		HasWebpage: webpage != nil,
+		Images:     images,
+		HasImages:  len(images) > 0,
 	}
 
 	return item, nil
@@ -327,7 +343,13 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 		item, _ := processMessage(m, wa)
 		item.Domain = channelDomain
 		item.ChannelTitle = channelTitle
-		items = append(items, item)
+
+		//
+		// Empty message?  Why is it empty?  Hide these from the output for now.
+		//
+		if len(item.Text) > 0 || item.Webpage != nil {
+			items = append(items, item)
+		}
 
 		wa.Log.Info(
 			fmt.Sprintf(
@@ -403,7 +425,9 @@ func main() {
 			sort.Slice(items, func(i, j int) bool {
 				return items[i].Date.Unix() < items[j].Date.Unix()
 			})
-			output(items)
+			var data struct{ Items []Item }
+			data.Items = items
+			lenta.Execute(os.Stdout, data)
 
 			return nil
 		})
