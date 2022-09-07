@@ -7,6 +7,7 @@
 // - [ ] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
 // - [.] Output media files when available (photos, caching, etc)
+// - [ ] Embed images into the HTML so that it is fully self-contained
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
 // - [ ] Markup for hyperlinks, etc. - why isn't this already in the message text?
@@ -45,6 +46,15 @@ type Item struct {
 	Date         time.Time
 	Webpage      *tg.WebPage
 	Images       []string
+}
+
+//
+// A bunch of stuff we frequently pass around together
+//
+type WorkArea struct {
+	Context context.Context
+	Log     *zap.Logger
+	Client  *tg.Client
 }
 
 func output(items []Item) {
@@ -157,7 +167,7 @@ func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, e
 	return channel, nil
 }
 
-func decodeMessages(log *zap.Logger, mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
+func decodeMessages(mmc tg.MessagesMessagesClass, wa WorkArea) (messages []tg.Message, err error) {
 	var innerMessages []tg.MessageClass
 
 	switch inner := mmc.(type) {
@@ -170,7 +180,7 @@ func decodeMessages(log *zap.Logger, mmc tg.MessagesMessagesClass) (messages []t
 	}
 
 	for _, m := range innerMessages {
-		log.Debug(m.String())
+		wa.Log.Debug(m.String())
 		switch message := m.(type) {
 		case *tg.Message:
 			messages = append(messages, *message)
@@ -181,10 +191,10 @@ func decodeMessages(log *zap.Logger, mmc tg.MessagesMessagesClass) (messages []t
 	return messages, err
 }
 
-func getChannelInfo(input tg.InputChannel, client *tg.Client, ctx context.Context) (string, string, error) {
+func getChannelInfo(input tg.InputChannel, wa WorkArea) (string, string, error) {
 	var result *tg.MessagesChatFull
 
-	result, err := client.ChannelsGetFullChannel(ctx, &input)
+	result, err := wa.Client.ChannelsGetFullChannel(wa.Context, &input)
 	if err != nil {
 		return "", "", err
 	}
@@ -199,11 +209,11 @@ func getChannelInfo(input tg.InputChannel, client *tg.Client, ctx context.Contex
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
-func extractThumbnailLocation(log *zap.Logger, photo tg.Photo) tg.InputPhotoFileLocation {
-	log.Debug(photo.String())
-	// TODO: do something with this thing
+func extractThumbnailLocation(photo tg.Photo, wa WorkArea) tg.InputPhotoFileLocation {
+	wa.Log.Debug(photo.String())
+	//
 	// https://core.telegram.org/api/files#downloading-files
-	// Where do we store these files?  In a local dir, or embedded into the HTML?
+	//
 	var sizes []tg.PhotoSize
 	for _, photoSizeClass := range photo.Sizes {
 		switch photoSize := photoSizeClass.(type) {
@@ -223,16 +233,118 @@ func extractThumbnailLocation(log *zap.Logger, photo tg.Photo) tg.InputPhotoFile
 			FileReference: photo.FileReference,
 			ThumbSize:     sizes[0].Type,
 		}
-		log.Debug(fmt.Sprintf("location: %s", location.String()))
+		wa.Log.Debug(fmt.Sprintf("location: %s", location.String()))
 		return location
 	}
 
 	return tg.InputPhotoFileLocation{}
 }
 
-func main() {
+func processMessage(m tg.Message, wa WorkArea) (Item, error) {
+	var webpage *tg.WebPage
+	var thumbnailLocation tg.InputPhotoFileLocation
+
+	if m.Media != nil {
+		wa.Log.Debug("attachment: " + m.Media.TypeName())
+
+		switch messageMedia := m.Media.(type) {
+		case *tg.MessageMediaPhoto:
+			switch photo := messageMedia.Photo.(type) {
+			case *tg.Photo:
+				thumbnailLocation = extractThumbnailLocation(*photo, wa)
+				break
+			}
+			break
+		case *tg.MessageMediaWebPage:
+			// Quoting another telegram channel?
+			switch wp := messageMedia.Webpage.(type) {
+			case *tg.WebPage:
+				webpage = wp
+				break
+			}
+		}
+	}
+
+	// TODO: configurable cache location
+	//
+	var images []string
+	if thumbnailLocation.ID != 0 {
+		path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
+		_, err := os.Stat(path)
+		if err != nil {
+			dloader := downloader.NewDownloader()
+			builder := dloader.Download(wa.Client, &thumbnailLocation)
+			builder.ToPath(wa.Context, path)
+		}
+		images = append(images, path)
+	}
+
+	// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
+	tm := time.Unix(int64(m.Date), 0)
+	item := Item{
+		MessageID: m.ID,
+		Text:      m.Message,
+		Date:      tm,
+		Webpage:   webpage,
+		Images:    images,
+	}
+
+	return item, nil
+}
+
+func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
+	var items []Item
 	thresholdDate := time.Now().Unix() - 24*3600
 
+	channel, err := decodeChannel(ip)
+	if err != nil {
+		return []Item{}, fmt.Errorf("unable to decodeChannel: %w", err)
+	}
+
+	channelTitle, channelDomain, err := getChannelInfo(channel, wa)
+	if err != nil {
+		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
+	}
+
+	request := tg.MessagesGetHistoryRequest{Peer: ip}
+	history, err := wa.Client.MessagesGetHistory(wa.Context, &request)
+	if err != nil {
+		return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
+	}
+
+	messages, err := decodeMessages(history, wa)
+	if err != nil {
+		// log.Debug(history.String())
+		return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
+	}
+
+	for _, m := range messages {
+		if int64(m.Date) < thresholdDate {
+			// old news from over 24 hours ago
+			continue
+		}
+
+		item, _ := processMessage(m, wa)
+		item.Domain = channelDomain
+		item.ChannelTitle = channelTitle
+		items = append(items, item)
+
+		wa.Log.Info(
+			fmt.Sprintf(
+				"handled MessageID %d (%s) from Domain %s (%d char %d images)",
+				item.MessageID,
+				item.Date,
+				item.Domain,
+				len(item.Text),
+				len(item.Images),
+			),
+		)
+	}
+
+	return items, nil
+}
+
+func main() {
 	phone := flag.String("phone", "", "phone number to authenticate")
 	flag.Parse()
 
@@ -250,18 +362,19 @@ func main() {
 			return err
 		}
 		return client.Run(ctx, func(ctx context.Context) error {
-			var items []Item
-
 			if err := client.Auth().IfNecessary(ctx, flow); err != nil {
 				return err
 			}
 
 			log.Info("Login success")
 
-			folders, err := client.API().MessagesGetDialogFilters(ctx)
+			wa := WorkArea{Client: client.API(), Log: log, Context: ctx}
+			folders, err := wa.Client.MessagesGetDialogFilters(ctx)
 			if err != nil {
 				return err
 			}
+
+			var items []Item
 
 			for _, dfc := range folders {
 				var folder tg.DialogFilter
@@ -277,89 +390,11 @@ func main() {
 
 				if folder.Title == "News" {
 					for _, ip := range folder.IncludePeers {
-						channel, err := decodeChannel(ip)
-						if err != nil {
-							log.Error(fmt.Sprintf("unable to decodeChannel: %s", err))
-							continue
-						}
-
-						channelTitle, channelDomain, err := getChannelInfo(channel, client.API(), ctx)
-						if err != nil {
-							log.Error(fmt.Sprintf("unable to getChannelFull: %s", err))
-							continue
-						}
-
-						request := tg.MessagesGetHistoryRequest{Peer: ip}
-						history, err := client.API().MessagesGetHistory(ctx, &request)
-						if err != nil {
-							log.Error(fmt.Sprintf("MessagesGetHistory failed: %s", err))
-							continue
-						}
-
-						messages, err := decodeMessages(log, history)
-						if err != nil {
-							// log.Debug(history.String())
-							log.Error(fmt.Sprintf("decodeMessages of type %q for channel %q failed: %s", history.TypeName(), channelTitle, err))
-							continue
-						}
-
-						for _, m := range messages {
-							if int64(m.Date) < thresholdDate {
-								// old news from over 24 hours ago
-								continue
-							}
-							var webpage *tg.WebPage
-							var thumbnailLocation tg.InputPhotoFileLocation
-
-							if m.Media != nil {
-								log.Debug("attachment: " + m.Media.TypeName())
-
-								switch messageMedia := m.Media.(type) {
-								case *tg.MessageMediaPhoto:
-									switch photo := messageMedia.Photo.(type) {
-									case *tg.Photo:
-										thumbnailLocation = extractThumbnailLocation(log, *photo)
-										break
-									}
-									break
-								case *tg.MessageMediaWebPage:
-									// Quoting another telegram channel?
-									switch wp := messageMedia.Webpage.(type) {
-									case *tg.WebPage:
-										webpage = wp
-										break
-									}
-								}
-							}
-
-							// TODO: configurable cache location
-							//
-							var images []string
-							if thumbnailLocation.ID != 0 {
-								path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
-								_, err := os.Stat(path)
-								if err != nil {
-									dloader := downloader.NewDownloader()
-									builder := dloader.Download(client.API(), &thumbnailLocation)
-									builder.ToPath(ctx, path)
-								}
-								images = append(images, path)
-							}
-
-							// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
-							tm := time.Unix(int64(m.Date), 0)
-							item := Item{
-								Domain:       channelDomain,
-								MessageID:    m.ID,
-								ChannelTitle: channelTitle,
-								Text:         m.Message,
-								Date:         tm,
-								Webpage:      webpage,
-								Images:       images,
-							}
-							items = append(items, item)
-
-							log.Info(fmt.Sprintf("handled MessageID %d (%s) from Domain %s (%d char, %d images)", item.MessageID, item.Date, item.Domain, len(item.Text), len(item.Images)))
+						peerItems, err := processPeer(ip, wa)
+						if err == nil {
+							items = append(items, peerItems[:]...)
+						} else {
+							log.Error(fmt.Sprintf("processPeer failed: %s", err))
 						}
 					}
 				}
