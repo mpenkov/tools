@@ -4,7 +4,7 @@
 //
 // - [ ] Pagination
 // - [x] Output HTML instead of text
-// - [.] Use proper Golang templates when outputting HTML
+// - [x] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
 // - [.] Output media files when available (photos, caching, etc)
 // - [ ] Embed images into the HTML so that it is fully self-contained
@@ -22,10 +22,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"html/template"
 	"os"
 	"sort"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -117,17 +117,17 @@ func tgUrl(item Item) string {
 var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup}
 var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
-func markup(message string) string {
+func markup(message string) template.HTML {
 	paragraphs := strings.Split(message, "\n")
-	// FIXME: very inefficient string concatenation
 	// TODO: try harder to split the first paragraph, maybe try a sentence split?
-	nonono := ""
+	//
+	var builder strings.Builder
 	for _, p := range paragraphs {
 		if len(p) > 0 {
-			nonono = nonono + "<p>" + p + "</p>\n"
+			builder.WriteString(fmt.Sprintf("<p>%s</p>\n", p))
 		}
 	}
-	return nonono
+	return template.HTML(builder.String())
 }
 
 // noSignUp can be embedded to prevent signing up.
