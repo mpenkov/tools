@@ -82,7 +82,7 @@ const templ = `
 			{{range .Items}}
 			<span class='item'>
 				<span class='datestamp'>{{.Date | formatDate}}</span>
-				<span class='channel'><a href={{. | tgUrl}}>@{{.Domain}}</a></span>
+				<span class='channel'><a href='{{. | tgUrl}}'>@{{.Domain}}</a></span>
 				<span class='message'>
 					{{.Text | markup}}
 				{{if .HasWebpage}}
@@ -91,6 +91,7 @@ const templ = `
 						<span class='description'>{{.Webpage.Description | markup}}</span>
 					</blockquote>
 				{{end}}
+				</span>
 				{{if .HasImages}}
 				<span class='images'>
 					{{range .Images}}
@@ -98,7 +99,6 @@ const templ = `
 					{{end}}
 				</span>
 				{{end}}
-				</span>
 			</span>
 			{{end}}
 		</div>
@@ -110,8 +110,8 @@ func formatDate(date time.Time) string {
 	return date.Format("15:04")
 }
 
-func tgUrl(item Item) string {
-	return fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID)
+func tgUrl(item Item) template.URL {
+	return template.URL(fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID))
 }
 
 var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup}
