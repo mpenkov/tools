@@ -47,8 +47,11 @@ type Item struct {
 	Date         time.Time
 	Webpage      *tg.WebPage
 	HasWebpage   bool
-	Images       []string
-	HasImages    bool
+
+	Image           string
+	HasImage        bool
+	HasVideo        bool
+	VideoAttributes string
 }
 
 //
@@ -75,6 +78,14 @@ const templ = `
 			p:nth-child(1) { font-weight: bold; font-size: large }
 			.channel { font-size: large; font-weight: bold }
 			.datestamp { font-size: xx-large; font-weight: bold; color: gray }
+			.placeholder {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				text-width: 300px;
+				height: 200px;
+				background-color: silver;
+			}
 		</style>
 	</head>
 	<body>
@@ -92,11 +103,16 @@ const templ = `
 					</blockquote>
 				{{end}}
 				</span>
-				{{if .HasImages}}
-				<span class='images'>
-					{{range .Images}}
-						<img src='{{.}}'></img>
-					{{end}}
+				{{if .HasImage}}
+				<span class='image'>
+					<a href='{{. | tgUrl}}'><img src='{{.Image}}'></img></a>
+				</span>
+				{{end}}
+				{{if .HasVideo}}
+				<span class='image'>
+					<span class='placeholder'>
+						<a href='{{. | tgUrl}}'>Video: {{.VideoAttributes}}</a>
+					</span>
 				</span>
 				{{end}}
 			</span>
@@ -256,7 +272,9 @@ func extractThumbnailLocation(photo tg.Photo, wa WorkArea) tg.InputPhotoFileLoca
 
 func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	var webpage *tg.WebPage
-	var thumbnailLocation tg.InputPhotoFileLocation
+	var image string
+	var hasImage, hasVideo bool
+	var videoAttributes string
 
 	if m.Media != nil {
 		wa.Log.Debug("attachment: " + m.Media.TypeName())
@@ -265,7 +283,18 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 		case *tg.MessageMediaPhoto:
 			switch photo := messageMedia.Photo.(type) {
 			case *tg.Photo:
-				thumbnailLocation = extractThumbnailLocation(*photo, wa)
+				thumbnailLocation := extractThumbnailLocation(*photo, wa)
+
+				// TODO: configurable cache location
+				path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
+				_, err := os.Stat(path)
+				if err != nil {
+					dloader := downloader.NewDownloader()
+					builder := dloader.Download(wa.Client, &thumbnailLocation)
+					builder.ToPath(wa.Context, path)
+				}
+				image = path
+				hasImage = true
 				break
 			}
 			break
@@ -276,21 +305,24 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 				webpage = wp
 				break
 			}
+		case *tg.MessageMediaDocument:
+			switch doc := messageMedia.Document.(type) {
+			case *tg.Document:
+				if strings.HasPrefix(doc.MimeType, "video/") {
+					// TODO: extract thumbnail
+					hasVideo = true
+					for _, attr := range doc.Attributes {
+						switch a := attr.(type) {
+						case *tg.DocumentAttributeVideo:
+							videoAttributes = fmt.Sprintf("%d x %d, %d seconds", a.W, a.H, a.Duration)
+							break
+						}
+					}
+				}
+				break
+			}
+			break
 		}
-	}
-
-	// TODO: configurable cache location
-	//
-	var images []string
-	if thumbnailLocation.ID != 0 {
-		path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
-		_, err := os.Stat(path)
-		if err != nil {
-			dloader := downloader.NewDownloader()
-			builder := dloader.Download(wa.Client, &thumbnailLocation)
-			builder.ToPath(wa.Context, path)
-		}
-		images = append(images, path)
 	}
 
 	// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
@@ -301,8 +333,11 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 		Date:       tm,
 		Webpage:    webpage,
 		HasWebpage: webpage != nil,
-		Images:     images,
-		HasImages:  len(images) > 0,
+
+		Image:           image,
+		HasImage:        hasImage,
+		HasVideo:        hasVideo,
+		VideoAttributes: videoAttributes,
 	}
 
 	return item, nil
@@ -353,12 +388,13 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 
 		wa.Log.Info(
 			fmt.Sprintf(
-				"handled MessageID %d (%s) from Domain %s (%d char %d images)",
+				"handled MessageID %d (%s) from Domain %s (%d char) [%t %t]",
 				item.MessageID,
 				item.Date,
 				item.Domain,
 				len(item.Text),
-				len(item.Images),
+				item.HasImage,
+				item.HasVideo,
 			),
 		)
 	}
