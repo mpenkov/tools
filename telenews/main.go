@@ -6,7 +6,7 @@
 // - [x] Output HTML instead of text
 // - [x] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
-// - [.] Output media files when available (photos, caching, etc)
+// - [x] Output media files when available (photos, caching, etc)
 // - [ ] Embed images into the HTML so that it is fully self-contained
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
@@ -14,6 +14,11 @@
 // - [ ] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels
 // - [ ] Keyboard shortcuts (j/k, etc)
+// - [ ] Group multiple photos/videos together
+// - [ ] extract video thumbnails
+// - [ ] configurable cache location
+// - [ ] try harder to split the first paragraph, maybe try a sentence split?
+//
 //
 package main
 
@@ -135,8 +140,6 @@ var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
 func markup(message string) template.HTML {
 	paragraphs := strings.Split(message, "\n")
-	// TODO: try harder to split the first paragraph, maybe try a sentence split?
-	//
 	var builder strings.Builder
 	for _, p := range paragraphs {
 		if len(p) > 0 {
@@ -284,8 +287,6 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 			switch photo := messageMedia.Photo.(type) {
 			case *tg.Photo:
 				thumbnailLocation := extractThumbnailLocation(*photo, wa)
-
-				// TODO: configurable cache location
 				path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
 				_, err := os.Stat(path)
 				if err != nil {
@@ -309,7 +310,6 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 			switch doc := messageMedia.Document.(type) {
 			case *tg.Document:
 				if strings.HasPrefix(doc.MimeType, "video/") {
-					// TODO: extract thumbnail
 					hasVideo = true
 					for _, attr := range doc.Attributes {
 						switch a := attr.(type) {
@@ -379,12 +379,7 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 		item.Domain = channelDomain
 		item.ChannelTitle = channelTitle
 
-		//
-		// Empty message?  Why is it empty?  Hide these from the output for now.
-		//
-		if len(item.Text) > 0 || item.Webpage != nil {
-			items = append(items, item)
-		}
+		items = append(items, item)
 
 		wa.Log.Info(
 			fmt.Sprintf(
