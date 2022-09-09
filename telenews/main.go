@@ -10,14 +10,15 @@
 // - [ ] Embed images into the HTML so that it is fully self-contained
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
-// - [ ] Markup for hyperlinks, etc. - why isn't this already in the message text?
+// - [ ] Markup for hyperlinks, etc. using entities from the Message
 // - [ ] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels
 // - [ ] Keyboard shortcuts (j/k, etc)
-// - [ ] Group multiple photos/videos together
-// - [ ] extract video thumbnails
+// - [x] Group multiple photos/videos together
+// - [x] extract video thumbnails
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
+// - [ ] Properly show video in the HTML: aspect ratio, display duration, etc.
 //
 //
 package main
@@ -44,19 +45,23 @@ import (
 	"github.com/gotd/td/tg"
 )
 
+type Media struct {
+	IsVideo    bool
+	Thumbnail  string
+	URL        template.URL
+	Attributes string
+}
+
 type Item struct {
 	Domain       string
 	MessageID    int
+	GroupedID    int64
 	ChannelTitle string
 	Text         string
 	Date         time.Time
 	Webpage      *tg.WebPage
 	HasWebpage   bool
-
-	Image           string
-	HasImage        bool
-	HasVideo        bool
-	VideoAttributes string
+	Media        []Media
 }
 
 //
@@ -77,7 +82,7 @@ const templ = `
 			.item-list { display: grid; grid-gap: 15px; }
 			.item { 
 				display: grid; 
-				grid-template-columns: 100px 200px 800px 300px;
+				grid-template-columns: 100px 200px 1000px;
 				border-top: 1px solid gray;
 			}
 			p:nth-child(1) { font-weight: bold; font-size: large }
@@ -87,9 +92,14 @@ const templ = `
 				display: flex;
 				align-items: center;
 				justify-content: center;
-				text-width: 300px;
+				width: 300px;
 				height: 200px;
 				background-color: silver;
+			}
+			.thumbnails { 
+				display: grid; 
+				grid-template-columns: 325px 325px 325px;
+				grid-gap: 10px;
 			}
 		</style>
 	</head>
@@ -107,19 +117,28 @@ const templ = `
 						<span class='description'>{{.Webpage.Description | markup}}</span>
 					</blockquote>
 				{{end}}
-				</span>
-				{{if .HasImage}}
-				<span class='image'>
-					<a href='{{. | tgUrl}}'><img src='{{.Image}}'></img></a>
-				</span>
+					<span class="thumbnails">
+				{{range .Media}}
+					{{if .IsVideo}}
+						<span class='image'>
+						{{if .Thumbnail}}
+							<span class='placeholder'>
+								<a href='{{.URL}}'><img class="video-thumbnail" src='{{.Thumbnail}}'></img></a>
+							</span>
+						{{else}}
+							<span class='placeholder'>
+								<a href='{{.URL}}'>Video: {{.Attributes}}</a>
+							</span>
+						{{end}}
+						</span>
+					{{else}}
+						<span class='image'>
+							<a href='{{.URL}}'><img class="image-thumbnail" src='{{.Thumbnail}}'></img></a>
+						</span>
+					{{end}}
 				{{end}}
-				{{if .HasVideo}}
-				<span class='image'>
-					<span class='placeholder'>
-						<a href='{{. | tgUrl}}'>Video: {{.VideoAttributes}}</a>
 					</span>
 				</span>
-				{{end}}
 			</span>
 			{{end}}
 		</div>
@@ -275,9 +294,7 @@ func extractThumbnailLocation(photo tg.Photo, wa WorkArea) tg.InputPhotoFileLoca
 
 func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	var webpage *tg.WebPage
-	var image string
-	var hasImage, hasVideo bool
-	var videoAttributes string
+	var media Media
 
 	if m.Media != nil {
 		wa.Log.Debug("attachment: " + m.Media.TypeName())
@@ -294,8 +311,7 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 					builder := dloader.Download(wa.Client, &thumbnailLocation)
 					builder.ToPath(wa.Context, path)
 				}
-				image = path
-				hasImage = true
+				media.Thumbnail = path
 				break
 			}
 			break
@@ -310,15 +326,62 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 			switch doc := messageMedia.Document.(type) {
 			case *tg.Document:
 				if strings.HasPrefix(doc.MimeType, "video/") {
-					hasVideo = true
+					media.IsVideo = true
 					for _, attr := range doc.Attributes {
 						switch a := attr.(type) {
 						case *tg.DocumentAttributeVideo:
-							videoAttributes = fmt.Sprintf("%d x %d, %d seconds", a.W, a.H, a.Duration)
+							media.Attributes = fmt.Sprintf("%d x %d, %d seconds", a.W, a.H, a.Duration)
 							break
 						}
 					}
 				}
+
+				//
+				// FIXME: refactor this copypasta
+				//
+				var sizes []tg.PhotoSize
+				for _, photoSizeClass := range doc.Thumbs {
+					switch photoSize := photoSizeClass.(type) {
+					case *tg.PhotoSize:
+						sizes = append(sizes, *photoSize)
+						break
+					}
+				}
+
+				//
+				// We want the smallest possible image, for now
+				//
+				sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
+				if len(sizes) > 0 {
+					location := tg.InputDocumentFileLocation{
+						ID:            doc.ID,
+						AccessHash:    doc.AccessHash,
+						FileReference: doc.FileReference,
+						ThumbSize:     sizes[0].Type,
+					}
+					path := fmt.Sprintf("/tmp/%d.jpeg", doc.ID)
+					_, err := os.Stat(path)
+					if err == nil {
+						//
+						// File exists, we don't need to download
+						//
+						media.Thumbnail = path
+					} else {
+						wa.Log.Info(fmt.Sprintf("downloading thumbnail for document ID %d", doc.ID))
+						dloader := downloader.NewDownloader()
+						builder := dloader.Download(wa.Client, &location)
+						_, err := builder.ToPath(wa.Context, path)
+						if err == nil {
+							media.Thumbnail = path
+						} else {
+							//
+							// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+							//
+							wa.Log.Error(fmt.Sprintf("download error: %s", err))
+						}
+					}
+				}
+
 				break
 			}
 			break
@@ -329,16 +392,13 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	tm := time.Unix(int64(m.Date), 0)
 	item := Item{
 		MessageID:  m.ID,
+		GroupedID:  m.GroupedID,
 		Text:       m.Message,
 		Date:       tm,
 		Webpage:    webpage,
 		HasWebpage: webpage != nil,
-
-		Image:           image,
-		HasImage:        hasImage,
-		HasVideo:        hasVideo,
-		VideoAttributes: videoAttributes,
 	}
+	item.Media = append(item.Media, media)
 
 	return item, nil
 }
@@ -378,23 +438,46 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 		item, _ := processMessage(m, wa)
 		item.Domain = channelDomain
 		item.ChannelTitle = channelTitle
+		for i := range item.Media {
+			item.Media[i].URL = tgUrl(item)
+		}
 
 		items = append(items, item)
 
 		wa.Log.Info(
 			fmt.Sprintf(
-				"handled MessageID %d (%s) from Domain %s (%d char) [%t %t]",
+				"handled MessageID %d (%s) from Domain %s (%d char)",
 				item.MessageID,
 				item.Date,
 				item.Domain,
 				len(item.Text),
-				item.HasImage,
-				item.HasVideo,
 			),
 		)
 	}
 
 	return items, nil
+}
+
+func groupItems(items []Item) (groups []Item) {
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].GroupedID < items[j].GroupedID
+	})
+	for i, item := range items {
+		if i == 0 || item.GroupedID == 0 {
+			groups = append(groups, item)
+			continue
+		}
+		lastGroup := &groups[len(groups)-1]
+		if item.GroupedID == lastGroup.GroupedID {
+			lastGroup.Media = append(lastGroup.Media, item.Media[:]...)
+			if len(lastGroup.Text) == 0 {
+				lastGroup.Text = item.Text
+			}
+		} else {
+			groups = append(groups, item)
+		}
+	}
+	return groups
 }
 
 func main() {
@@ -453,11 +536,13 @@ func main() {
 				}
 			}
 
-			sort.Slice(items, func(i, j int) bool {
-				return items[i].Date.Unix() < items[j].Date.Unix()
+			groupedItems := groupItems(items)
+
+			sort.Slice(groupedItems, func(i, j int) bool {
+				return groupedItems[i].Date.Unix() < groupedItems[j].Date.Unix()
 			})
 			var data struct{ Items []Item }
-			data.Items = items
+			data.Items = groupedItems
 			lenta.Execute(os.Stdout, data)
 
 			return nil
