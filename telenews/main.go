@@ -46,10 +46,12 @@ import (
 )
 
 type Media struct {
-	IsVideo    bool
-	Thumbnail  string
-	URL        template.URL
-	Attributes string
+	IsVideo         bool
+	Thumbnail       string
+	URL             template.URL
+	ThumbnailWidth  int
+	ThumbnailHeight int
+	Attributes      string
 }
 
 type Item struct {
@@ -101,6 +103,13 @@ const templ = `
 				grid-template-columns: 325px 325px 325px;
 				grid-gap: 10px;
 			}
+			.image-thumbnail { border-radius: 5%; }
+			.video-thumbnail {
+				border-top: 20px solid black;
+				border-left: 10px dashed black; 
+				border-bottom: 20px solid black;
+				border-right: 10px dashed black; 
+			}
 		</style>
 	</head>
 	<body>
@@ -122,9 +131,9 @@ const templ = `
 					{{if .IsVideo}}
 						<span class='image'>
 						{{if .Thumbnail}}
-							<span class='placeholder'>
-								<a href='{{.URL}}'><img class="video-thumbnail" src='{{.Thumbnail}}'></img></a>
-							</span>
+							<a href='{{.URL}}'>
+								<img class="video-thumbnail" src='{{.Thumbnail}}' width="{{.ThumbnailWidth}}" Height="{{.ThumbnailHeight}}"></img>
+							</a>
 						{{else}}
 							<span class='placeholder'>
 								<a href='{{.URL}}'>Video: {{.Attributes}}</a>
@@ -353,6 +362,9 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 				//
 				sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
 				if len(sizes) > 0 {
+					media.ThumbnailWidth = sizes[0].W
+					media.ThumbnailHeight = sizes[0].H
+
 					location := tg.InputDocumentFileLocation{
 						ID:            doc.ID,
 						AccessHash:    doc.AccessHash,
