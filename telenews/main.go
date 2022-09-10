@@ -309,35 +309,28 @@ func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) 
 	return tg.PhotoSize{}, fmt.Errorf("unable to find a suitable thumbnail size")
 }
 
-func extractThumbnailLocation(photo tg.Photo, wa WorkArea) tg.InputPhotoFileLocation {
-	wa.Log.Debug(photo.String())
-	//
-	// https://core.telegram.org/api/files#downloading-files
-	//
-	var sizes []tg.PhotoSize
-	for _, photoSizeClass := range photo.Sizes {
-		switch photoSize := photoSizeClass.(type) {
-		case *tg.PhotoSize:
-			sizes = append(sizes, *photoSize)
-			break
+func downloadThumbnail(id int64, location tg.InputFileLocationClass, wa WorkArea) (string, error) {
+	path := fmt.Sprintf("/tmp/%d.jpeg", id)
+	_, err := os.Stat(path)
+	if err == nil {
+		//
+		// File exists, we don't need to download
+		//
+		return path, nil
+	} else {
+		wa.Log.Info(fmt.Sprintf("downloading thumbnail for id %d", id))
+		dloader := downloader.NewDownloader()
+		builder := dloader.Download(wa.Client, location)
+		_, err := builder.ToPath(wa.Context, path)
+		if err == nil {
+			return path, nil
+		} else {
+			//
+			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+			//
+			return "", err
 		}
 	}
-	//
-	// We want the smallest possible image, for now
-	//
-	sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
-	if len(sizes) > 0 {
-		location := tg.InputPhotoFileLocation{
-			ID:            photo.ID,
-			AccessHash:    photo.AccessHash,
-			FileReference: photo.FileReference,
-			ThumbSize:     sizes[0].Type,
-		}
-		wa.Log.Debug(fmt.Sprintf("location: %s", location.String()))
-		return location
-	}
-
-	return tg.InputPhotoFileLocation{}
 }
 
 func processMessage(m tg.Message, wa WorkArea) (Item, error) {
@@ -351,15 +344,29 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 		case *tg.MessageMediaPhoto:
 			switch photo := messageMedia.Photo.(type) {
 			case *tg.Photo:
-				thumbnailLocation := extractThumbnailLocation(*photo, wa)
-				path := fmt.Sprintf("/tmp/%d.jpeg", thumbnailLocation.ID)
-				_, err := os.Stat(path)
+				thumbnailSize, err := extractThumbnailSize(photo.Sizes)
 				if err != nil {
-					dloader := downloader.NewDownloader()
-					builder := dloader.Download(wa.Client, &thumbnailLocation)
-					builder.ToPath(wa.Context, path)
+					wa.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+				} else {
+					location := tg.InputPhotoFileLocation{
+						ID:            photo.ID,
+						AccessHash:    photo.AccessHash,
+						FileReference: photo.FileReference,
+						ThumbSize:     thumbnailSize.Type,
+					}
+					media.ThumbnailWidth = thumbnailSize.W
+					media.ThumbnailHeight = thumbnailSize.H
+
+					path, err := downloadThumbnail(photo.ID, &location, wa)
+					if err == nil {
+						media.Thumbnail = path
+					} else {
+						//
+						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+						//
+						wa.Log.Error(fmt.Sprintf("download error: %s", err))
+					}
 				}
-				media.Thumbnail = path
 				break
 			}
 			break
@@ -386,55 +393,29 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 					}
 				}
 
-				//
-				// FIXME: refactor this copypasta
-				//
-				var sizes []tg.PhotoSize
-				for _, photoSizeClass := range doc.Thumbs {
-					switch photoSize := photoSizeClass.(type) {
-					case *tg.PhotoSize:
-						sizes = append(sizes, *photoSize)
-						break
-					}
-				}
-
-				//
-				// We want the smallest possible image, for now
-				//
-				sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
-				if len(sizes) > 0 {
-					media.ThumbnailWidth = sizes[0].W
-					media.ThumbnailHeight = sizes[0].H
+				thumbnailSize, err := extractThumbnailSize(doc.Thumbs)
+				if err != nil {
+					wa.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+				} else {
+					media.ThumbnailWidth = thumbnailSize.W
+					media.ThumbnailHeight = thumbnailSize.H
 
 					location := tg.InputDocumentFileLocation{
 						ID:            doc.ID,
 						AccessHash:    doc.AccessHash,
 						FileReference: doc.FileReference,
-						ThumbSize:     sizes[0].Type,
+						ThumbSize:     thumbnailSize.Type,
 					}
-					path := fmt.Sprintf("/tmp/%d.jpeg", doc.ID)
-					_, err := os.Stat(path)
+					path, err := downloadThumbnail(doc.ID, &location, wa)
 					if err == nil {
-						//
-						// File exists, we don't need to download
-						//
 						media.Thumbnail = path
 					} else {
-						wa.Log.Info(fmt.Sprintf("downloading thumbnail for document ID %d", doc.ID))
-						dloader := downloader.NewDownloader()
-						builder := dloader.Download(wa.Client, &location)
-						_, err := builder.ToPath(wa.Context, path)
-						if err == nil {
-							media.Thumbnail = path
-						} else {
-							//
-							// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-							//
-							wa.Log.Error(fmt.Sprintf("download error: %s", err))
-						}
+						//
+						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+						//
+						wa.Log.Error(fmt.Sprintf("download error: %s", err))
 					}
 				}
-
 				break
 			}
 			break
