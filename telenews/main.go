@@ -2,7 +2,7 @@
 //
 // TODO:
 //
-// - [ ] Pagination
+// - [ ] Pagination (we can only fetch 20 messages from a single channel at a time)
 // - [x] Output HTML instead of text
 // - [x] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
@@ -18,7 +18,10 @@
 // - [x] extract video thumbnails
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
-// - [ ] Properly show video in the HTML: aspect ratio, display duration, etc.
+// - [x] Properly show video in the HTML: aspect ratio, display duration, etc.
+// - [ ] Correctly identify and attribute forwarded messages
+// - [ ] Include photos/videos from forwarded messages
+// - [ ] Download videos as well?
 //
 //
 package main
@@ -51,7 +54,7 @@ type Media struct {
 	URL             template.URL
 	ThumbnailWidth  int
 	ThumbnailHeight int
-	Attributes      string
+	Duration        string
 }
 
 type Item struct {
@@ -105,10 +108,21 @@ const templ = `
 			}
 			.image-thumbnail { border-radius: 5%; }
 			.video-thumbnail {
-				border-top: 20px solid black;
-				border-left: 10px dashed black; 
-				border-bottom: 20px solid black;
-				border-right: 10px dashed black; 
+				border-left: 5px dashed black; 
+				border-right: 5px dashed black; 
+			}
+
+			.container { position: relative; }
+			.container img { width: 100%; }
+			.container p {
+				position: absolute;
+				bottom: 0;
+				right: 0;
+				color: white;
+				background-color: black;
+				font-size: xx-large;
+				padding: 5px;
+				margin: 5px;
 			}
 		</style>
 	</head>
@@ -129,14 +143,17 @@ const templ = `
 					<span class="thumbnails">
 				{{range .Media}}
 					{{if .IsVideo}}
-						<span class='image'>
 						{{if .Thumbnail}}
-							<a href='{{.URL}}'>
-								<img class="video-thumbnail" src='{{.Thumbnail}}' width="{{.ThumbnailWidth}}" Height="{{.ThumbnailHeight}}"></img>
-							</a>
+						<span class='image'>
+							<span class='container'>
+								<a href='{{.URL}}'>
+									<img class="video-thumbnail" src='{{.Thumbnail}}' width="{{.ThumbnailWidth}}" Height="{{.ThumbnailHeight}}"></img>
+								</a>
+								<p>{{.Duration}}</p>
+							</span>
 						{{else}}
 							<span class='placeholder'>
-								<a href='{{.URL}}'>Video: {{.Attributes}}</a>
+								<a href='{{.URL}}'>Video: {{.Duration}}</a>
 							</span>
 						{{end}}
 						</span>
@@ -270,6 +287,28 @@ func getChannelInfo(input tg.InputChannel, wa WorkArea) (string, string, error) 
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
+func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) {
+	//
+	// https://core.telegram.org/api/files#downloading-files
+	//
+	var sizes []tg.PhotoSize
+	for _, photoSizeClass := range candidates {
+		switch photoSize := photoSizeClass.(type) {
+		case *tg.PhotoSize:
+			sizes = append(sizes, *photoSize)
+			break
+		}
+	}
+	//
+	// We want the smallest possible image, for now
+	//
+	sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
+	if len(sizes) > 0 {
+		return sizes[0], nil
+	}
+	return tg.PhotoSize{}, fmt.Errorf("unable to find a suitable thumbnail size")
+}
+
 func extractThumbnailLocation(photo tg.Photo, wa WorkArea) tg.InputPhotoFileLocation {
 	wa.Log.Debug(photo.String())
 	//
@@ -339,7 +378,9 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 					for _, attr := range doc.Attributes {
 						switch a := attr.(type) {
 						case *tg.DocumentAttributeVideo:
-							media.Attributes = fmt.Sprintf("%d x %d, %d seconds", a.W, a.H, a.Duration)
+							minutes := a.Duration / 60
+							seconds := a.Duration % 60
+							media.Duration = fmt.Sprintf("%02d:%02d", minutes, seconds)
 							break
 						}
 					}
