@@ -7,6 +7,9 @@
 // - [x] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
 // - [x] Output media files when available (photos, caching, etc)
+// - [x] Group multiple photos/videos together
+// - [x] extract video thumbnails
+// - [x] Properly show video in the HTML: aspect ratio, display duration, etc.
 // - [ ] Embed images into the HTML so that it is fully self-contained
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
@@ -14,14 +17,10 @@
 // - [ ] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels
 // - [ ] Keyboard shortcuts (j/k, etc)
-// - [x] Group multiple photos/videos together
-// - [x] extract video thumbnails
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
-// - [x] Properly show video in the HTML: aspect ratio, display duration, etc.
 // - [ ] Correctly identify and attribute forwarded messages
 // - [ ] Include photos/videos from forwarded messages
-// - [ ] Download videos as well?
 //
 //
 package main
@@ -112,6 +111,7 @@ const templ = `
 				border-right: 5px dashed black; 
 			}
 
+			/* https://stackoverflow.com/questions/44275502/overlay-text-on-image-html#44275595 */
 			.container { position: relative; }
 			.container img { width: 100%; }
 			.container p {
