@@ -16,12 +16,11 @@
 // - [ ] Markup for hyperlinks, etc. using entities from the Message
 // - [ ] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels
-// - [ ] Keyboard shortcuts (j/k, etc)
+// - [x] Keyboard shortcuts (j/k, etc)
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
 // - [ ] Correctly identify and attribute forwarded messages
 // - [ ] Include photos/videos from forwarded messages
-//
 //
 package main
 
@@ -84,14 +83,15 @@ const templ = `
 		<style>
 			body { font-family: Helvetica; }
 			.item-list { display: grid; grid-gap: 15px; }
-			.item { 
-				display: grid; 
+			.item {
+				display: grid;
 				grid-template-columns: 100px 200px 1000px;
 				border-top: 1px solid gray;
 			}
-			p:nth-child(1) { font-weight: bold; font-size: large }
+			.item:nth-child(odd) { background-color: hsl(0, 0%, 90%); }
 			.channel { font-size: large; font-weight: bold }
 			.datestamp { font-size: xx-large; font-weight: bold; color: gray }
+			.message p:nth-child(1) { font-weight: bold; font-size: large }
 			.placeholder {
 				display: flex;
 				align-items: center;
@@ -100,15 +100,15 @@ const templ = `
 				height: 200px;
 				background-color: silver;
 			}
-			.thumbnails { 
-				display: grid; 
+			.thumbnails {
+				display: grid;
 				grid-template-columns: 325px 325px 325px;
 				grid-gap: 10px;
 			}
 			.image-thumbnail { border-radius: 5%; }
 			.video-thumbnail {
-				border-left: 5px dashed black; 
-				border-right: 5px dashed black; 
+				border-left: 5px dashed black;
+				border-right: 5px dashed black;
 			}
 
 			/* https://stackoverflow.com/questions/44275502/overlay-text-on-image-html#44275595 */
@@ -128,20 +128,20 @@ const templ = `
 	</head>
 	<body>
 		<div class='item-list'>
-			{{range .Items}}
-			<span class='item'>
-				<span class='datestamp'>{{.Date | formatDate}}</span>
-				<span class='channel'><a href='{{. | tgUrl}}'>@{{.Domain}}</a></span>
+			{{range $index, $item := .Items}}
+			<span class='item' id="item-{{$index}}">
+				<span class='datestamp'><p>{{$item.Date | formatDate}}</p></span>
+				<span class='channel'><p><a href='{{$item | tgUrl}}'>@{{$item.Domain}}</a></p></span>
 				<span class='message'>
-					{{.Text | markup}}
-				{{if .HasWebpage}}
+					{{$item.Text | markup}}
+				{{if $item.HasWebpage}}
 					<blockquote class='webpage'>
-						<span class='link'><a href='{{.Webpage.URL}}'>{{.Webpage.Title}}</a></span>
-						<span class='description'>{{.Webpage.Description | markup}}</span>
+						<span class='link'><a href='{{$item.Webpage.URL}}'>{{$item.Webpage.Title}}</a></span>
+						<span class='description'>{{$item.Webpage.Description | markup}}</span>
 					</blockquote>
 				{{end}}
 					<span class="thumbnails">
-				{{range .Media}}
+				{{range $item.Media}}
 					{{if .IsVideo}}
 						{{if .Thumbnail}}
 						<span class='image'>
@@ -168,6 +168,22 @@ const templ = `
 			</span>
 			{{end}}
 		</div>
+		<script>
+var currentItemId = 0;
+//
+// https://stackoverflow.com/questions/4416505/how-to-take-keyboard-input-in-javascript
+// https://stackoverflow.com/questions/42503599/how-to-make-javascript-scrollintoview-smooth
+//
+document.addEventListener('keydown', function(event) {
+	console.debug(event);
+    if(event.keyCode == 74) {
+        currentItemId = Math.min(currentItemId + 1, {{ .MaxIndex }});
+    } else if(event.keyCode == 75) {
+        currentItemId = Math.max(currentItemId - 1, 0);
+    }
+	document.getElementById("item-" + currentItemId).scrollIntoView({ behavior: 'smooth' });
+});
+		</script>
 	</body>
 </html>
 `
@@ -575,8 +591,9 @@ func main() {
 			sort.Slice(groupedItems, func(i, j int) bool {
 				return groupedItems[i].Date.Unix() < groupedItems[j].Date.Unix()
 			})
-			var data struct{ Items []Item }
+			var data struct{ Items []Item; MaxIndex int }
 			data.Items = groupedItems
+			data.MaxIndex = len(groupedItems) - 1
 			lenta.Execute(os.Stdout, data)
 
 			return nil
