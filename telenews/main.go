@@ -13,9 +13,9 @@
 // - [ ] Embed images into the HTML so that it is fully self-contained
 // - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
-// - [ ] Markup for hyperlinks, etc. using entities from the Message
+// - [x] Markup for hyperlinks, etc. using entities from the Message
 // - [ ] Parametrize threshold for old news
-// - [ ] Exclude cross-posts between covered channels
+// - [ ] Exclude cross-posts between covered channels (i.e. deduplicate messages)
 // - [x] Keyboard shortcuts (j/k, etc)
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
@@ -91,7 +92,7 @@ const templ = `
 			.item:nth-child(odd) { background-color: hsl(0, 0%, 90%); }
 			.channel { font-size: large; font-weight: bold }
 			.datestamp { font-size: xx-large; font-weight: bold; color: gray }
-			.message p:nth-child(1) { font-weight: bold; font-size: large }
+			/* .message p:nth-child(1) { font-weight: bold; font-size: large } */
 			.placeholder {
 				display: flex;
 				align-items: center;
@@ -176,12 +177,15 @@ var currentItemId = 0;
 //
 document.addEventListener('keydown', function(event) {
 	console.debug(event);
-    if(event.keyCode == 74) {
-        currentItemId = Math.min(currentItemId + 1, {{ .MaxIndex }});
-    } else if(event.keyCode == 75) {
-        currentItemId = Math.max(currentItemId - 1, 0);
-    }
+	if (event.keyCode == 74) {
+		currentItemId = Math.min(currentItemId + 1, {{.MaxIndex}});
+	} else if (event.keyCode == 75) {
+		currentItemId = Math.max(currentItemId - 1, 0);
+	} else {
+		return true;
+	}
 	document.getElementById("item-" + currentItemId).scrollIntoView({ behavior: 'smooth' });
+	return false;
 });
 		</script>
 	</body>
@@ -443,7 +447,7 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	item := Item{
 		MessageID:  m.ID,
 		GroupedID:  m.GroupedID,
-		Text:       m.Message,
+		Text:       highlightEntities(m.Message, m.Entities),
 		Date:       tm,
 		Webpage:    webpage,
 		HasWebpage: webpage != nil,
@@ -451,6 +455,102 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 	item.Media = append(item.Media, media)
 
 	return item, nil
+}
+
+func highlightEntities(message string, entities []tg.MessageEntityClass) string {
+	//
+	// FIXME: debug this function, still a bit buggy for some messages
+	//
+	// the offsets provided by GetOffset() and friends are in UTF-16 space, so
+	// we have to take our UTF-8 message, decode it to runes (implicitly as part
+	// of the range function), then encode to UTF-16 chunks.
+	//
+	// BTW UTF-16 is a variable-width format, so a character can occupy 1 or 2
+	// bytes.
+	//
+	var chunks [][]uint16
+	for _, char := range message {
+		encoded := utf16.Encode([]rune{char})
+		chunks = append(chunks, encoded)
+	}
+
+	var builder strings.Builder
+
+	type Element struct {
+		Tag string
+		End int
+	}
+
+	var chunkIndex int = 0
+	var entityIndex int = 0
+	var stack []Element
+	for _, chunk := range chunks {
+		//
+		// First, attempt to terminate any elements that end at the current
+		// chunk.  There may be more than one.
+		//
+		for len(stack) > 0 {
+			top := len(stack) - 1
+			if stack[top].End == chunkIndex {
+				builder.WriteString(stack[top].Tag)
+				stack = stack[:top]
+			} else {
+				break
+			}
+		}
+
+		haveMoreEntities := entityIndex < len(entities)
+		if haveMoreEntities && entities[entityIndex].GetOffset() == chunkIndex {
+			switch e := entities[entityIndex].(type) {
+			case *tg.MessageEntityBold:
+				builder.WriteString(fmt.Sprintf("<strong entity='%d'>", entityIndex))
+				stack = append(stack, Element{Tag: "</strong>", End: e.Offset + e.Length})
+				break
+			case *tg.MessageEntityItalic:
+				builder.WriteString(fmt.Sprintf("<em entity='%d'>", entityIndex))
+				stack = append(stack, Element{Tag: "</em>", End: e.Offset + e.Length})
+				break
+			case *tg.MessageEntityTextURL:
+				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s'>", entityIndex, e.URL))
+				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
+				break
+			case *tg.MessageEntityURL:
+				//
+				// Argh, now we have to work out what the URL is from the stuff
+				// we've just encoded...
+				//
+				var urlChunks []uint16
+				for i := 0; i < e.Length; i++ {
+					if e.Offset + i >= len(chunks) {
+						break
+					}
+					urlChunks = append(urlChunks, chunks[e.Offset + i]...)
+				}
+				var url []rune = utf16.Decode(urlChunks)
+				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s'>", entityIndex, string(url)))
+				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
+				break
+			}
+
+			entityIndex += 1
+		}
+
+		var decodedChunk []rune = utf16.Decode(chunk)
+		builder.WriteString(string(decodedChunk))
+
+		chunkIndex += len(chunk)
+	}
+
+	//
+	// Ensure we've closed all the tags that we've opened, just to be safe.
+	//
+	for len(stack) > 0 {
+		top := len(stack) - 1
+		builder.WriteString(stack[top].Tag)
+		stack = stack[:top]
+	}
+
+	return builder.String()
 }
 
 func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
@@ -591,7 +691,10 @@ func main() {
 			sort.Slice(groupedItems, func(i, j int) bool {
 				return groupedItems[i].Date.Unix() < groupedItems[j].Date.Unix()
 			})
-			var data struct{ Items []Item; MaxIndex int }
+			var data struct {
+				Items    []Item
+				MaxIndex int
+			}
 			data.Items = groupedItems
 			data.MaxIndex = len(groupedItems) - 1
 			lenta.Execute(os.Stdout, data)
