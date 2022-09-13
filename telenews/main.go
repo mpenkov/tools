@@ -170,23 +170,48 @@ const templ = `
 			{{end}}
 		</div>
 		<script>
-var currentItemId = 0;
 //
-// https://stackoverflow.com/questions/4416505/how-to-take-keyboard-input-in-javascript
-// https://stackoverflow.com/questions/42503599/how-to-make-javascript-scrollintoview-smooth
+// https://stackoverflow.com/questions/5353934/check-if-element-is-visible-on-screen
 //
+function checkVisible(elm, threshold, mode) {
+  threshold = threshold || 0
+  mode = mode || 'visible'
+
+  var rect = elm.getBoundingClientRect()
+  var viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight)
+  var above = rect.bottom - threshold < 0
+  var below = rect.top - viewHeight + threshold >= 0
+
+  return mode === 'above' ? above : (mode === 'below' ? below : !above && !below)
+}
+
 document.addEventListener('keydown', function(event) {
-	console.debug(event);
-	if (event.keyCode == 74) {
-		currentItemId = Math.min(currentItemId + 1, {{.MaxIndex}});
-	} else if (event.keyCode == 75) {
-		currentItemId = Math.max(currentItemId - 1, 0);
+  var up = false
+	if (event.keyCode === 74) {
+		up = false
+	} else if (event.keyCode === 75) {
+		up = true
 	} else {
-		return true;
+		return true
 	}
-	document.getElementById("item-" + currentItemId).scrollIntoView({ behavior: 'smooth' });
-	return false;
-});
+  var items = document.querySelectorAll(".item")
+
+  //
+  // Find the first visible item, and then scroll from it to the adjacent ones
+  //
+  for (let i = 0; i < items.length; ++i) {
+    if (checkVisible(items[i])) {
+      if (up && i > 0) {
+        items[i-1].scrollIntoView({behavior: 'smooth', 'block': 'end'})
+        return false
+      } else if (!up && i != items.length - 1) {
+        items[i+1].scrollIntoView({behavior: 'smooth', 'block': 'start'})
+        return false
+      }
+    }
+  }
+	return false
+})
 		</script>
 	</body>
 </html>
