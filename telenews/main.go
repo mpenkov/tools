@@ -83,15 +83,15 @@ const templ = `
 	<head>
 		<style>
 			body { font-family: Helvetica; }
-			.item-list { display: grid; grid-gap: 15px; }
+			.item-list { display: grid; grid-gap: 0px; }
 			.item {
 				display: grid;
 				grid-template-columns: 100px 200px 1000px;
 				border-top: 1px solid gray;
+				padding: 10px;
 			}
 			.item:nth-child(odd) { background-color: hsl(0, 0%, 90%); }
 			.channel { font-size: large; font-weight: bold }
-			.datestamp { font-size: xx-large; font-weight: bold; color: gray }
 			/* .message p:nth-child(1) { font-weight: bold; font-size: large } */
 			.placeholder {
 				display: flex;
@@ -126,10 +126,10 @@ const templ = `
 				margin: 5px;
 			}
 
-			.datestamp { margin: 10px; }
-			.datestamp > a { text-decoration: none; }
-			span.time { font-size: xx-large; font-weight: bold;  }
-			span.date { font-size:  medium; }
+			.datestamp { margin: 10px; font-weight: bold; display: flex; flex-direction: column; gap: 10px; }
+			.datestamp a { text-decoration: none; }
+			span.time { font-size: large; font-weight: bold;  }
+			span.date { font-size:  small; }
 			.channel { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 			.channel-title { font-size: small; color: gray; }
 			.message p { margin-top: 10px; }
@@ -143,10 +143,8 @@ const templ = `
 			{{range $index, $item := .Items}}
 			<span class='item' id="item-{{$index}}">
 				<span class='datestamp'>
-					<a href='{{$item | tgUrl}}'>
-						<span class="time">{{$item.Date | formatTime}}</span>
-						<span class="date">{{$item.Date | formatDate}}</span>
-					</a>
+					<span class="time"><a href='{{$item | tgUrl}}'>{{$item.Date | formatTime}}</a></span>
+					<span class="date"><a href='{{$item | tgUrl}}'>{{$item.Date | formatDate}}</a></span>
 				</span>
 				<span class='channel'>
 					<span class="domain">@{{$item.Domain}}</span>
@@ -156,7 +154,7 @@ const templ = `
 					{{$item.Text | markup}}
 				{{if $item.HasWebpage}}
 					<blockquote class='webpage'>
-						<span class='link'><a href='{{$item.Webpage.URL}}'>{{$item.Webpage.Title}}</a></span>
+						<span class='link'><a href='{{$item.Webpage.URL}}' target='_blank'>{{$item.Webpage.Title}}</a></span>
 						<span class='description'>{{$item.Webpage.Description | markup}}</span>
 					</blockquote>
 				{{end}}
@@ -205,6 +203,7 @@ function checkVisible(elm, threshold, mode) {
 }
 
 document.addEventListener('keydown', function(event) {
+	console.debug("keyCode", event.keyCode)
 	var up = false
 	if (event.keyCode === 74) {
 		up = false
@@ -219,7 +218,7 @@ document.addEventListener('keydown', function(event) {
 	// Find the first visible item, and then scroll from it to the adjacent ones
 	//
 	for (let i = 0; i < items.length; ++i) {
-		if (checkVisible(items[i])) {
+		if (checkVisible(items[i], 50)) {
 			if (up && i > 0) {
 				items[i-1].scrollIntoView({behavior: 'smooth', 'block': 'end'})
 				return false
@@ -557,8 +556,12 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 				builder.WriteString(fmt.Sprintf("<em entity='%d'>", entityIndex))
 				stack = append(stack, Element{Tag: "</em>", End: e.Offset + e.Length})
 				break
+			case *tg.MessageEntityStrike:
+				builder.WriteString(fmt.Sprintf("<s entity='%d'>", entityIndex))
+				stack = append(stack, Element{Tag: "</s>", End: e.Offset + e.Length})
+				break
 			case *tg.MessageEntityTextURL:
-				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s'>", entityIndex, e.URL))
+				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, e.URL))
 				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
 				break
 			case *tg.MessageEntityURL:
@@ -574,7 +577,7 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 					urlChunks = append(urlChunks, chunks[e.Offset + i]...)
 				}
 				var url []rune = utf16.Decode(urlChunks)
-				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s'>", entityIndex, string(url)))
+				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, string(url)))
 				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
 				break
 			}
