@@ -125,14 +125,33 @@ const templ = `
 				padding: 5px;
 				margin: 5px;
 			}
+
+			.datestamp { margin: 10px; }
+			.datestamp > a { text-decoration: none; }
+			span.time { font-size: xx-large; font-weight: bold;  }
+			span.date { font-size:  medium; }
+			.channel { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+			.channel-title { font-size: small; color: gray; }
+			.message p { margin-top: 10px; }
+
+			a { color: darkred; }
+			a:hover { color: red; }
 		</style>
 	</head>
 	<body>
 		<div class='item-list'>
 			{{range $index, $item := .Items}}
 			<span class='item' id="item-{{$index}}">
-				<span class='datestamp'><p>{{$item.Date | formatDate}}</p></span>
-				<span class='channel'><p><a href='{{$item | tgUrl}}'>@{{$item.Domain}}</a></p></span>
+				<span class='datestamp'>
+					<a href='{{$item | tgUrl}}'>
+						<span class="time">{{$item.Date | formatTime}}</span>
+						<span class="date">{{$item.Date | formatDate}}</span>
+					</a>
+				</span>
+				<span class='channel'>
+					<span class="domain">@{{$item.Domain}}</span>
+					<span class="channel-title">({{$item.ChannelTitle}})</span>
+				</span>
 				<span class='message'>
 					{{$item.Text | markup}}
 				{{if $item.HasWebpage}}
@@ -174,19 +193,19 @@ const templ = `
 // https://stackoverflow.com/questions/5353934/check-if-element-is-visible-on-screen
 //
 function checkVisible(elm, threshold, mode) {
-  threshold = threshold || 0
-  mode = mode || 'visible'
+	threshold = threshold || 0
+	mode = mode || 'visible'
 
-  var rect = elm.getBoundingClientRect()
-  var viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight)
-  var above = rect.bottom - threshold < 0
-  var below = rect.top - viewHeight + threshold >= 0
+	var rect = elm.getBoundingClientRect()
+	var viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight)
+	var above = rect.bottom - threshold < 0
+	var below = rect.top - viewHeight + threshold >= 0
 
-  return mode === 'above' ? above : (mode === 'below' ? below : !above && !below)
+	return mode === 'above' ? above : (mode === 'below' ? below : !above && !below)
 }
 
 document.addEventListener('keydown', function(event) {
-  var up = false
+	var up = false
 	if (event.keyCode === 74) {
 		up = false
 	} else if (event.keyCode === 75) {
@@ -194,30 +213,33 @@ document.addEventListener('keydown', function(event) {
 	} else {
 		return true
 	}
-  var items = document.querySelectorAll(".item")
+	var items = document.querySelectorAll(".item")
 
-  //
-  // Find the first visible item, and then scroll from it to the adjacent ones
-  //
-  for (let i = 0; i < items.length; ++i) {
-    if (checkVisible(items[i])) {
-      if (up && i > 0) {
-        items[i-1].scrollIntoView({behavior: 'smooth', 'block': 'end'})
-        return false
-      } else if (!up && i != items.length - 1) {
-        items[i+1].scrollIntoView({behavior: 'smooth', 'block': 'start'})
-        return false
-      }
-    }
-  }
+	//
+	// Find the first visible item, and then scroll from it to the adjacent ones
+	//
+	for (let i = 0; i < items.length; ++i) {
+		if (checkVisible(items[i])) {
+			if (up && i > 0) {
+				items[i-1].scrollIntoView({behavior: 'smooth', 'block': 'end'})
+				return false
+			} else if (!up && i != items.length - 1) {
+				items[i+1].scrollIntoView({behavior: 'smooth', 'block': 'start'})
+				return false
+			}
+		}
+	}
 	return false
 })
 		</script>
 	</body>
 </html>
 `
-
 func formatDate(date time.Time) string {
+	return date.Format("2 Jan", )
+}
+
+func formatTime(date time.Time) string {
 	return date.Format("15:04")
 }
 
@@ -225,7 +247,7 @@ func tgUrl(item Item) template.URL {
 	return template.URL(fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID))
 }
 
-var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup}
+var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup, "formatTime": formatTime}
 var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
 func markup(message string) template.HTML {
