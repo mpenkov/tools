@@ -27,9 +27,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"html/template"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -50,6 +52,7 @@ import (
 type Media struct {
 	IsVideo         bool
 	Thumbnail       string
+	ThumbnailBase64 string
 	URL             template.URL
 	ThumbnailWidth  int
 	ThumbnailHeight int
@@ -156,7 +159,7 @@ const templ = `
 						<span class='image'>
 							<span class='container'>
 								<a href='{{.URL}}'>
-									<img class="video-thumbnail" src='{{.Thumbnail}}' width="{{.ThumbnailWidth}}" Height="{{.ThumbnailHeight}}"></img>
+									<img class="video-thumbnail" src='data:image/jpeg;base64, {{.ThumbnailBase64 }}' width="{{.ThumbnailWidth}}" Height="{{.ThumbnailHeight}}"></img>
 								</a>
 								<p>{{.Duration}}</p>
 							</span>
@@ -168,7 +171,7 @@ const templ = `
 						</span>
 					{{else}}
 						<span class='image'>
-							<a href='{{.URL}}'><img class="image-thumbnail" src='{{.Thumbnail}}'></img></a>
+							<a href='{{.URL}}'><img class="image-thumbnail" src='data:image/jpeg;base64, {{.ThumbnailBase64 }}'></img></a>
 						</span>
 					{{end}}
 				{{end}}
@@ -237,7 +240,31 @@ func tgUrl(item Item) template.URL {
 	return template.URL(fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID))
 }
 
-var mapping = template.FuncMap{"formatDate": formatDate, "tgUrl": tgUrl, "markup": markup, "formatTime": formatTime}
+func imageAsBase64(path string) string {
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("unable to open %q: %s", path, err)
+	}
+	defer f.Close()
+	const bufSize int = 1024768
+	var buf []byte = make([]byte, bufSize)
+	numRead, err := f.Read(buf)
+	if numRead >= bufSize {
+		log.Fatalf("buffer underflow reading %q", path)
+	}
+	var encoded string = base64.StdEncoding.EncodeToString(buf[:numRead])
+	return encoded
+}
+
+var mapping = template.FuncMap{
+	"formatDate": formatDate,
+	"tgUrl": tgUrl,
+	"markup": markup,
+	"formatTime": formatTime,
+}
 var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
 func markup(message string) template.HTML {
@@ -374,9 +401,83 @@ func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) 
 	}
 }
 
+func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
+	var media Media
+	if strings.HasPrefix(doc.MimeType, "video/") {
+		media.IsVideo = true
+		for _, attr := range doc.Attributes {
+			switch a := attr.(type) {
+			case *tg.DocumentAttributeVideo:
+				minutes := a.Duration / 60
+				seconds := a.Duration % 60
+				media.Duration = fmt.Sprintf("%02d:%02d", minutes, seconds)
+				break
+			}
+		}
+	}
+
+	thumbnailSize, err := extractThumbnailSize(doc.Thumbs)
+	w.Log.Info(fmt.Sprintf("doc.ID: %d thumbnailSize: %s", doc.ID, thumbnailSize.String()))
+	if err != nil {
+		return media, err
+	} else {
+		media.ThumbnailWidth = thumbnailSize.W
+		media.ThumbnailHeight = thumbnailSize.H
+
+		location := tg.InputDocumentFileLocation{
+			ID:            doc.ID,
+			AccessHash:    doc.AccessHash,
+			FileReference: doc.FileReference,
+			ThumbSize:     thumbnailSize.Type,
+		}
+		path, err := w.downloadThumbnail(doc.ID, &location)
+		if err == nil {
+			media.Thumbnail = path
+			media.ThumbnailBase64 = imageAsBase64(path)
+		} else {
+			//
+			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+			//
+			return media, err
+		}
+	}
+
+	return media, nil
+}
+
+func (w Worker) downloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
+	var media Media
+	thumbnailSize, err := extractThumbnailSize(photo.Sizes)
+	if err != nil {
+		return media, err
+	} else {
+		location := tg.InputPhotoFileLocation{
+			ID:            photo.ID,
+			AccessHash:    photo.AccessHash,
+			FileReference: photo.FileReference,
+			ThumbSize:     thumbnailSize.Type,
+		}
+		media.ThumbnailWidth = thumbnailSize.W
+		media.ThumbnailHeight = thumbnailSize.H
+
+		path, err := w.downloadThumbnail(photo.ID, &location)
+		if err == nil {
+			media.Thumbnail = path
+			media.ThumbnailBase64 = imageAsBase64(path)
+		} else {
+			//
+			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
+			//
+			return media, err
+		}
+	}
+	return media, nil
+}
+
 func (w Worker) processMessage(m tg.Message) (Item, error) {
 	var webpage *tg.WebPage
 	var media Media
+	var haveMedia bool = false
 
 	if m.Media != nil {
 		w.Log.Debug("attachment: " + m.Media.TypeName())
@@ -385,77 +486,61 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		case *tg.MessageMediaPhoto:
 			switch photo := messageMedia.Photo.(type) {
 			case *tg.Photo:
-				thumbnailSize, err := extractThumbnailSize(photo.Sizes)
+				var err error
+				media, err = w.downloadPhotoThumbnail(photo)
 				if err != nil {
-					w.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+					w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 				} else {
-					location := tg.InputPhotoFileLocation{
-						ID:            photo.ID,
-						AccessHash:    photo.AccessHash,
-						FileReference: photo.FileReference,
-						ThumbSize:     thumbnailSize.Type,
-					}
-					media.ThumbnailWidth = thumbnailSize.W
-					media.ThumbnailHeight = thumbnailSize.H
-
-					path, err := w.downloadThumbnail(photo.ID, &location)
-					if err == nil {
-						media.Thumbnail = path
-					} else {
-						//
-						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-						//
-						w.Log.Error(fmt.Sprintf("download error: %s", err))
-					}
+					haveMedia = true
 				}
 				break
 			}
 			break
 		case *tg.MessageMediaWebPage:
-			// Quoting another telegram channel?
 			switch wp := messageMedia.Webpage.(type) {
 			case *tg.WebPage:
+				//
+				// Quoting another telegram channel?
+				// Two places to look here: .Document and .Photo.
+				// Either one will do.
+				//
 				webpage = wp
+				switch doc := wp.Document.(type) {
+				case *tg.Document:
+					var err error
+					media, err = w.downloadDocumentThumbnail(doc)
+					if err != nil {
+						w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
+					} else {
+						haveMedia = true
+					}
+					break
+				}
+
+				if (!haveMedia) {
+					switch photo := wp.Photo.(type) {
+					case *tg.Photo:
+						var err error
+						media, err = w.downloadPhotoThumbnail(photo)
+						if err != nil {
+							w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
+						} else {
+							haveMedia = true
+						}
+						break
+					}
+				}
 				break
 			}
 		case *tg.MessageMediaDocument:
 			switch doc := messageMedia.Document.(type) {
 			case *tg.Document:
-				if strings.HasPrefix(doc.MimeType, "video/") {
-					media.IsVideo = true
-					for _, attr := range doc.Attributes {
-						switch a := attr.(type) {
-						case *tg.DocumentAttributeVideo:
-							minutes := a.Duration / 60
-							seconds := a.Duration % 60
-							media.Duration = fmt.Sprintf("%02d:%02d", minutes, seconds)
-							break
-						}
-					}
-				}
-
-				thumbnailSize, err := extractThumbnailSize(doc.Thumbs)
+				var err error
+				media, err = w.downloadDocumentThumbnail(doc)
 				if err != nil {
-					w.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+					w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 				} else {
-					media.ThumbnailWidth = thumbnailSize.W
-					media.ThumbnailHeight = thumbnailSize.H
-
-					location := tg.InputDocumentFileLocation{
-						ID:            doc.ID,
-						AccessHash:    doc.AccessHash,
-						FileReference: doc.FileReference,
-						ThumbSize:     thumbnailSize.Type,
-					}
-					path, err := w.downloadThumbnail(doc.ID, &location)
-					if err == nil {
-						media.Thumbnail = path
-					} else {
-						//
-						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-						//
-						w.Log.Error(fmt.Sprintf("download error: %s", err))
-					}
+					haveMedia = true
 				}
 				break
 			}
@@ -473,7 +558,9 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		Webpage:    webpage,
 		HasWebpage: webpage != nil,
 	}
-	item.Media = append(item.Media, media)
+	if haveMedia {
+		item.Media = append(item.Media, media)
+	}
 
 	return item, nil
 }
@@ -522,22 +609,23 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 
 		haveMoreEntities := entityIndex < len(entities)
 		if haveMoreEntities && entities[entityIndex].GetOffset() == chunkIndex {
+			end := entities[entityIndex].GetOffset() + entities[entityIndex].GetLength()
 			switch e := entities[entityIndex].(type) {
 			case *tg.MessageEntityBold:
 				builder.WriteString(fmt.Sprintf("<strong entity='%d'>", entityIndex))
-				stack = append(stack, Element{Tag: "</strong>", End: e.Offset + e.Length})
+				stack = append(stack, Element{Tag: "</strong>", End: end})
 				break
 			case *tg.MessageEntityItalic:
 				builder.WriteString(fmt.Sprintf("<em entity='%d'>", entityIndex))
-				stack = append(stack, Element{Tag: "</em>", End: e.Offset + e.Length})
+				stack = append(stack, Element{Tag: "</em>", End: end})
 				break
 			case *tg.MessageEntityStrike:
 				builder.WriteString(fmt.Sprintf("<s entity='%d'>", entityIndex))
-				stack = append(stack, Element{Tag: "</s>", End: e.Offset + e.Length})
+				stack = append(stack, Element{Tag: "</s>", End: end})
 				break
 			case *tg.MessageEntityTextURL:
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, e.URL))
-				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
+				stack = append(stack, Element{Tag: "</a>", End: end})
 				break
 			case *tg.MessageEntityURL:
 				//
@@ -553,7 +641,7 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 				}
 				var url []rune = utf16.Decode(urlChunks)
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, string(url)))
-				stack = append(stack, Element{Tag: "</a>", End: e.Offset + e.Length})
+				stack = append(stack, Element{Tag: "</a>", End: end})
 				break
 			}
 
@@ -701,8 +789,8 @@ func main() {
 
 			log.Info("Login success")
 
-			wa := WorkArea{Client: client.API(), Log: log, Context: ctx}
-			folders, err := wa.Client.MessagesGetDialogFilters(ctx)
+			w := Worker{Client: client.API(), Log: log, Context: ctx}
+			folders, err := w.Client.MessagesGetDialogFilters(ctx)
 			if err != nil {
 				return err
 			}
@@ -723,7 +811,7 @@ func main() {
 
 				if folder.Title == "News" {
 					for _, ip := range folder.IncludePeers {
-						peerItems, err := processPeer(ip, wa)
+						peerItems, err := w.processPeer(ip)
 						if err == nil {
 							items = append(items, peerItems[:]...)
 						} else {
