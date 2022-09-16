@@ -68,15 +68,6 @@ type Item struct {
 	Media        []Media
 }
 
-//
-// A bunch of stuff we frequently pass around together
-//
-type WorkArea struct {
-	Context context.Context
-	Log     *zap.Logger
-	Client  *tg.Client
-}
-
 const templ = `
 <!DOCTYPE html>
 <html>
@@ -311,7 +302,13 @@ func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, e
 	return channel, nil
 }
 
-func decodeMessages(mmc tg.MessagesMessagesClass, wa WorkArea) (messages []tg.Message, err error) {
+type Worker struct {
+	Context context.Context
+	Log     *zap.Logger
+	Client  *tg.Client
+}
+
+func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
 	var innerMessages []tg.MessageClass
 
 	switch inner := mmc.(type) {
@@ -324,7 +321,7 @@ func decodeMessages(mmc tg.MessagesMessagesClass, wa WorkArea) (messages []tg.Me
 	}
 
 	for _, m := range innerMessages {
-		wa.Log.Debug(m.String())
+		w.Log.Debug(m.String())
 		switch message := m.(type) {
 		case *tg.Message:
 			messages = append(messages, *message)
@@ -335,10 +332,10 @@ func decodeMessages(mmc tg.MessagesMessagesClass, wa WorkArea) (messages []tg.Me
 	return messages, err
 }
 
-func getChannelInfo(input tg.InputChannel, wa WorkArea) (string, string, error) {
+func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
 	var result *tg.MessagesChatFull
 
-	result, err := wa.Client.ChannelsGetFullChannel(wa.Context, &input)
+	result, err := w.Client.ChannelsGetFullChannel(w.Context, &input)
 	if err != nil {
 		return "", "", err
 	}
@@ -353,29 +350,7 @@ func getChannelInfo(input tg.InputChannel, wa WorkArea) (string, string, error) 
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
-func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) {
-	//
-	// https://core.telegram.org/api/files#downloading-files
-	//
-	var sizes []tg.PhotoSize
-	for _, photoSizeClass := range candidates {
-		switch photoSize := photoSizeClass.(type) {
-		case *tg.PhotoSize:
-			sizes = append(sizes, *photoSize)
-			break
-		}
-	}
-	//
-	// We want the smallest possible image, for now
-	//
-	sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
-	if len(sizes) > 0 {
-		return sizes[0], nil
-	}
-	return tg.PhotoSize{}, fmt.Errorf("unable to find a suitable thumbnail size")
-}
-
-func downloadThumbnail(id int64, location tg.InputFileLocationClass, wa WorkArea) (string, error) {
+func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) (string, error) {
 	path := fmt.Sprintf("/tmp/%d.jpeg", id)
 	_, err := os.Stat(path)
 	if err == nil {
@@ -384,10 +359,10 @@ func downloadThumbnail(id int64, location tg.InputFileLocationClass, wa WorkArea
 		//
 		return path, nil
 	} else {
-		wa.Log.Info(fmt.Sprintf("downloading thumbnail for id %d", id))
+		w.Log.Info(fmt.Sprintf("downloading thumbnail for id %d", id))
 		dloader := downloader.NewDownloader()
-		builder := dloader.Download(wa.Client, location)
-		_, err := builder.ToPath(wa.Context, path)
+		builder := dloader.Download(w.Client, location)
+		_, err := builder.ToPath(w.Context, path)
 		if err == nil {
 			return path, nil
 		} else {
@@ -399,12 +374,12 @@ func downloadThumbnail(id int64, location tg.InputFileLocationClass, wa WorkArea
 	}
 }
 
-func processMessage(m tg.Message, wa WorkArea) (Item, error) {
+func (w Worker) processMessage(m tg.Message) (Item, error) {
 	var webpage *tg.WebPage
 	var media Media
 
 	if m.Media != nil {
-		wa.Log.Debug("attachment: " + m.Media.TypeName())
+		w.Log.Debug("attachment: " + m.Media.TypeName())
 
 		switch messageMedia := m.Media.(type) {
 		case *tg.MessageMediaPhoto:
@@ -412,7 +387,7 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 			case *tg.Photo:
 				thumbnailSize, err := extractThumbnailSize(photo.Sizes)
 				if err != nil {
-					wa.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+					w.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
 				} else {
 					location := tg.InputPhotoFileLocation{
 						ID:            photo.ID,
@@ -423,14 +398,14 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 					media.ThumbnailWidth = thumbnailSize.W
 					media.ThumbnailHeight = thumbnailSize.H
 
-					path, err := downloadThumbnail(photo.ID, &location, wa)
+					path, err := w.downloadThumbnail(photo.ID, &location)
 					if err == nil {
 						media.Thumbnail = path
 					} else {
 						//
 						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
 						//
-						wa.Log.Error(fmt.Sprintf("download error: %s", err))
+						w.Log.Error(fmt.Sprintf("download error: %s", err))
 					}
 				}
 				break
@@ -461,7 +436,7 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 
 				thumbnailSize, err := extractThumbnailSize(doc.Thumbs)
 				if err != nil {
-					wa.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
+					w.Log.Error(fmt.Sprintf("unable to extract thumbnail: %s", err))
 				} else {
 					media.ThumbnailWidth = thumbnailSize.W
 					media.ThumbnailHeight = thumbnailSize.H
@@ -472,14 +447,14 @@ func processMessage(m tg.Message, wa WorkArea) (Item, error) {
 						FileReference: doc.FileReference,
 						ThumbSize:     thumbnailSize.Type,
 					}
-					path, err := downloadThumbnail(doc.ID, &location, wa)
+					path, err := w.downloadThumbnail(doc.ID, &location)
 					if err == nil {
 						media.Thumbnail = path
 					} else {
 						//
 						// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
 						//
-						wa.Log.Error(fmt.Sprintf("download error: %s", err))
+						w.Log.Error(fmt.Sprintf("download error: %s", err))
 					}
 				}
 				break
@@ -603,7 +578,7 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 	return builder.String()
 }
 
-func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
+func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	var items []Item
 	thresholdDate := time.Now().Unix() - 24*3600
 
@@ -612,18 +587,18 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 		return []Item{}, fmt.Errorf("unable to decodeChannel: %w", err)
 	}
 
-	channelTitle, channelDomain, err := getChannelInfo(channel, wa)
+	channelTitle, channelDomain, err := w.getChannelInfo(channel)
 	if err != nil {
 		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
 	}
 
 	request := tg.MessagesGetHistoryRequest{Peer: ip}
-	history, err := wa.Client.MessagesGetHistory(wa.Context, &request)
+	history, err := w.Client.MessagesGetHistory(w.Context, &request)
 	if err != nil {
 		return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
 	}
 
-	messages, err := decodeMessages(history, wa)
+	messages, err := w.decodeMessages(history)
 	if err != nil {
 		// log.Debug(history.String())
 		return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
@@ -635,7 +610,7 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 			continue
 		}
 
-		item, _ := processMessage(m, wa)
+		item, _ := w.processMessage(m)
 		item.Domain = channelDomain
 		item.ChannelTitle = channelTitle
 		for i := range item.Media {
@@ -644,7 +619,7 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 
 		items = append(items, item)
 
-		wa.Log.Info(
+		w.Log.Info(
 			fmt.Sprintf(
 				"handled MessageID %d (%s) from Domain %s (%d char)",
 				item.MessageID,
@@ -656,6 +631,28 @@ func processPeer(ip tg.InputPeerClass, wa WorkArea) ([]Item, error) {
 	}
 
 	return items, nil
+}
+
+func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) {
+	//
+	// https://core.telegram.org/api/files#downloading-files
+	//
+	var sizes []tg.PhotoSize
+	for _, photoSizeClass := range candidates {
+		switch photoSize := photoSizeClass.(type) {
+		case *tg.PhotoSize:
+			sizes = append(sizes, *photoSize)
+			break
+		}
+	}
+	//
+	// We want the smallest possible image, for now
+	//
+	sort.Slice(sizes, func(i, j int) bool { return sizes[i].Size < sizes[j].Size })
+	if len(sizes) > 0 {
+		return sizes[0], nil
+	}
+	return tg.PhotoSize{}, fmt.Errorf("unable to find a suitable thumbnail size")
 }
 
 func groupItems(items []Item) (groups []Item) {
