@@ -10,8 +10,8 @@
 // - [x] Group multiple photos/videos together
 // - [x] extract video thumbnails
 // - [x] Properly show video in the HTML: aspect ratio, display duration, etc.
-// - [ ] Embed images into the HTML so that it is fully self-contained
-// - [ ] Configuration file (contain phone number, secrets, channel IDs, etc) - avoid signing up to public channels
+// - [x] Embed images into the HTML so that it is fully self-contained
+// - [.] Configuration file (contain phone number, secrets, channel names, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
 // - [x] Markup for hyperlinks, etc. using entities from the Message
 // - [ ] Parametrize threshold for old news
@@ -20,7 +20,7 @@
 // - [ ] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
 // - [ ] Correctly identify and attribute forwarded messages
-// - [ ] Include photos/videos from forwarded messages
+// - [x] Include photos/videos from forwarded messages
 //
 package main
 
@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"os"
 	"sort"
@@ -377,6 +378,20 @@ func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
+func (w Worker) searchForChannel(username string) (*tg.InputChannel, error) {
+	request := tg.MessagesSearchGlobalRequest{
+		Filter: &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Q: username,
+	}
+	response, err := w.Client.MessagesSearchGlobal(w.Context, &request)
+	if err != nil {
+		return nil, err
+	}
+	w.Log.Info(response.String())
+	return nil, nil
+}
+
 func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) (string, error) {
 	path := fmt.Sprintf("/tmp/%d.jpeg", id)
 	_, err := os.Stat(path)
@@ -393,9 +408,6 @@ func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) 
 		if err == nil {
 			return path, nil
 		} else {
-			//
-			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-			//
 			return "", err
 		}
 	}
@@ -418,9 +430,7 @@ func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 
 	thumbnailSize, err := extractThumbnailSize(doc.Thumbs)
 	w.Log.Info(fmt.Sprintf("doc.ID: %d thumbnailSize: %s", doc.ID, thumbnailSize.String()))
-	if err != nil {
-		return media, err
-	} else {
+	if err == nil {
 		media.ThumbnailWidth = thumbnailSize.W
 		media.ThumbnailHeight = thumbnailSize.H
 
@@ -434,23 +444,16 @@ func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 		if err == nil {
 			media.Thumbnail = path
 			media.ThumbnailBase64 = imageAsBase64(path)
-		} else {
-			//
-			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-			//
-			return media, err
 		}
 	}
 
-	return media, nil
+	return media, err
 }
 
 func (w Worker) downloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
 	var media Media
 	thumbnailSize, err := extractThumbnailSize(photo.Sizes)
-	if err != nil {
-		return media, err
-	} else {
+	if err == nil {
 		location := tg.InputPhotoFileLocation{
 			ID:            photo.ID,
 			AccessHash:    photo.AccessHash,
@@ -464,14 +467,9 @@ func (w Worker) downloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
 		if err == nil {
 			media.Thumbnail = path
 			media.ThumbnailBase64 = imageAsBase64(path)
-		} else {
-			//
-			// TODO: handle error, e.g. https://core.telegram.org/api/file_reference
-			//
-			return media, err
 		}
 	}
-	return media, nil
+	return media, err
 }
 
 func (w Worker) processMessage(m tg.Message) (Item, error) {
@@ -767,7 +765,29 @@ func groupItems(items []Item) (groups []Item) {
 
 func main() {
 	phone := flag.String("phone", "", "phone number to authenticate")
+	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
 	flag.Parse()
+
+	var channels []string
+	if *channelsPath != "" {
+		f, err := os.Open(*channelsPath)
+		if err != nil {
+			log.Fatalf("unable to open %q: %s", *channelsPath, err)
+		}
+		defer f.Close()
+
+		var reader *bufio.Reader = bufio.NewReader(f)
+		for {
+			ch, err := reader.ReadString('\n')
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				log.Fatalf("error reading %q: %s", *channelsPath, err)
+			} else {
+				channels = append(channels, strings.TrimRight(ch, "\n"))
+			}
+		}
+	}
 
 	examples.Run(func(ctx context.Context, log *zap.Logger) error {
 		// Setting up authentication flow helper based on terminal auth.
@@ -790,33 +810,53 @@ func main() {
 			log.Info("Login success")
 
 			w := Worker{Client: client.API(), Log: log, Context: ctx}
-			folders, err := w.Client.MessagesGetDialogFilters(ctx)
-			if err != nil {
-				return err
-			}
-
 			var items []Item
 
-			for _, dfc := range folders {
-				var folder tg.DialogFilter
-				ok := false
-				switch f := dfc.(type) {
-				case *tg.DialogFilter:
-					folder = *f
-					ok = true
-				}
-				if !ok {
+//			folders, err := w.Client.MessagesGetDialogFilters(ctx)
+//			if err != nil {
+//				return err
+//			}
+//			for _, dfc := range folders {
+//				var folder tg.DialogFilter
+//				ok := false
+//				switch f := dfc.(type) {
+//				case *tg.DialogFilter:
+//					folder = *f
+//					ok = true
+//				}
+//				if !ok {
+//					continue
+//				}
+//
+//				if folder.Title == "News" {
+//					for _, ip := range folder.IncludePeers {
+//						peerItems, err := w.processPeer(ip)
+//						if err == nil {
+//							items = append(items, peerItems[:]...)
+//						} else {
+//							log.Error(fmt.Sprintf("processPeer failed: %s", err))
+//						}
+//					}
+//				}
+//			}
+
+			for _, username := range channels {
+				peer, err := w.Client.ContactsResolveUsername(w.Context, username)
+				if err != nil {
+					log.Error(fmt.Sprintf("unable to resolve peer for username %q: %s", username, err))
 					continue
 				}
-
-				if folder.Title == "News" {
-					for _, ip := range folder.IncludePeers {
-						peerItems, err := w.processPeer(ip)
-						if err == nil {
-							items = append(items, peerItems[:]...)
-						} else {
-							log.Error(fmt.Sprintf("processPeer failed: %s", err))
-						}
+				switch chat := peer.Chats[0].(type) {
+				case *tg.Channel:
+					var ip tg.InputPeerChannel = tg.InputPeerChannel{
+						ChannelID: chat.ID,
+						AccessHash: chat.AccessHash,
+					}
+					peerItems, err := w.processPeer(&ip)
+					if err == nil {
+						items = append(items, peerItems[:]...)
+					} else {
+						log.Error(fmt.Sprintf("processPeer failed: %s", err))
 					}
 				}
 			}
