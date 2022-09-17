@@ -229,8 +229,9 @@ document.addEventListener('keydown', function(event) {
 	</body>
 </html>
 `
+
 func formatDate(date time.Time) string {
-	return date.Format("2 Jan", )
+	return date.Format("2 Jan")
 }
 
 func formatTime(date time.Time) string {
@@ -262,8 +263,8 @@ func imageAsBase64(path string) string {
 
 var mapping = template.FuncMap{
 	"formatDate": formatDate,
-	"tgUrl": tgUrl,
-	"markup": markup,
+	"tgUrl":      tgUrl,
+	"markup":     markup,
 	"formatTime": formatTime,
 }
 var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
@@ -501,7 +502,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 					break
 				}
 
-				if (!haveMedia) {
+				if !haveMedia {
 					switch photo := wp.Photo.(type) {
 					case *tg.Photo:
 						var err error
@@ -673,10 +674,10 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 				//
 				var urlChunks []uint16
 				for i := 0; i < e.Length; i++ {
-					if e.Offset + i >= len(chunks) {
+					if e.Offset+i >= len(chunks) {
 						break
 					}
-					urlChunks = append(urlChunks, chunks[e.Offset + i]...)
+					urlChunks = append(urlChunks, chunks[e.Offset+i]...)
 				}
 				var url []rune = utf16.Decode(urlChunks)
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, string(url)))
@@ -798,33 +799,33 @@ func main() {
 			w := Worker{Client: client.API(), Log: log, Context: ctx}
 			var items []Item
 
-//			folders, err := w.Client.MessagesGetDialogFilters(ctx)
-//			if err != nil {
-//				return err
-//			}
-//			for _, dfc := range folders {
-//				var folder tg.DialogFilter
-//				ok := false
-//				switch f := dfc.(type) {
-//				case *tg.DialogFilter:
-//					folder = *f
-//					ok = true
-//				}
-//				if !ok {
-//					continue
-//				}
-//
-//				if folder.Title == "News" {
-//					for _, ip := range folder.IncludePeers {
-//						peerItems, err := w.processPeer(ip)
-//						if err == nil {
-//							items = append(items, peerItems[:]...)
-//						} else {
-//							log.Error(fmt.Sprintf("processPeer failed: %s", err))
-//						}
-//					}
-//				}
-//			}
+			//			folders, err := w.Client.MessagesGetDialogFilters(ctx)
+			//			if err != nil {
+			//				return err
+			//			}
+			//			for _, dfc := range folders {
+			//				var folder tg.DialogFilter
+			//				ok := false
+			//				switch f := dfc.(type) {
+			//				case *tg.DialogFilter:
+			//					folder = *f
+			//					ok = true
+			//				}
+			//				if !ok {
+			//					continue
+			//				}
+			//
+			//				if folder.Title == "News" {
+			//					for _, ip := range folder.IncludePeers {
+			//						peerItems, err := w.processPeer(ip)
+			//						if err == nil {
+			//							items = append(items, peerItems[:]...)
+			//						} else {
+			//							log.Error(fmt.Sprintf("processPeer failed: %s", err))
+			//						}
+			//					}
+			//				}
+			//			}
 
 			for _, username := range channels {
 				peer, err := w.Client.ContactsResolveUsername(w.Context, username)
@@ -835,7 +836,7 @@ func main() {
 				switch chat := peer.Chats[0].(type) {
 				case *tg.Channel:
 					var ip tg.InputPeerChannel = tg.InputPeerChannel{
-						ChannelID: chat.ID,
+						ChannelID:  chat.ID,
 						AccessHash: chat.AccessHash,
 					}
 					peerItems, err := w.processPeer(&ip)
