@@ -378,20 +378,6 @@ func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
-func (w Worker) searchForChannel(username string) (*tg.InputChannel, error) {
-	request := tg.MessagesSearchGlobalRequest{
-		Filter: &tg.InputMessagesFilterEmpty{},
-		OffsetPeer: &tg.InputPeerEmpty{},
-		Q: username,
-	}
-	response, err := w.Client.MessagesSearchGlobal(w.Context, &request)
-	if err != nil {
-		return nil, err
-	}
-	w.Log.Info(response.String())
-	return nil, nil
-}
-
 func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) (string, error) {
 	path := fmt.Sprintf("/tmp/%d.jpeg", id)
 	_, err := os.Stat(path)
@@ -563,6 +549,61 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 	return item, nil
 }
 
+func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
+	var items []Item
+	thresholdDate := time.Now().Unix() - 24*3600
+
+	channel, err := decodeChannel(ip)
+	if err != nil {
+		return []Item{}, fmt.Errorf("unable to decodeChannel: %w", err)
+	}
+
+	channelTitle, channelDomain, err := w.getChannelInfo(channel)
+	if err != nil {
+		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
+	}
+
+	request := tg.MessagesGetHistoryRequest{Peer: ip}
+	history, err := w.Client.MessagesGetHistory(w.Context, &request)
+	if err != nil {
+		return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
+	}
+
+	messages, err := w.decodeMessages(history)
+	if err != nil {
+		// log.Debug(history.String())
+		return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
+	}
+
+	for _, m := range messages {
+		if int64(m.Date) < thresholdDate {
+			// old news from over 24 hours ago
+			continue
+		}
+
+		item, _ := w.processMessage(m)
+		item.Domain = channelDomain
+		item.ChannelTitle = channelTitle
+		for i := range item.Media {
+			item.Media[i].URL = tgUrl(item)
+		}
+
+		items = append(items, item)
+
+		w.Log.Info(
+			fmt.Sprintf(
+				"handled MessageID %d (%s) from Domain %s (%d char)",
+				item.MessageID,
+				item.Date,
+				item.Domain,
+				len(item.Text),
+			),
+		)
+	}
+
+	return items, nil
+}
+
 func highlightEntities(message string, entities []tg.MessageEntityClass) string {
 	//
 	// FIXME: debug this function, still a bit buggy for some messages
@@ -662,61 +703,6 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 	}
 
 	return builder.String()
-}
-
-func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
-	var items []Item
-	thresholdDate := time.Now().Unix() - 24*3600
-
-	channel, err := decodeChannel(ip)
-	if err != nil {
-		return []Item{}, fmt.Errorf("unable to decodeChannel: %w", err)
-	}
-
-	channelTitle, channelDomain, err := w.getChannelInfo(channel)
-	if err != nil {
-		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
-	}
-
-	request := tg.MessagesGetHistoryRequest{Peer: ip}
-	history, err := w.Client.MessagesGetHistory(w.Context, &request)
-	if err != nil {
-		return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
-	}
-
-	messages, err := w.decodeMessages(history)
-	if err != nil {
-		// log.Debug(history.String())
-		return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
-	}
-
-	for _, m := range messages {
-		if int64(m.Date) < thresholdDate {
-			// old news from over 24 hours ago
-			continue
-		}
-
-		item, _ := w.processMessage(m)
-		item.Domain = channelDomain
-		item.ChannelTitle = channelTitle
-		for i := range item.Media {
-			item.Media[i].URL = tgUrl(item)
-		}
-
-		items = append(items, item)
-
-		w.Log.Info(
-			fmt.Sprintf(
-				"handled MessageID %d (%s) from Domain %s (%d char)",
-				item.MessageID,
-				item.Date,
-				item.Domain,
-				len(item.Text),
-			),
-		)
-	}
-
-	return items, nil
 }
 
 func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) {
