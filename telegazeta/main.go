@@ -14,10 +14,10 @@
 // - [.] Configuration file (contain phone number, secrets, channel names, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
 // - [x] Markup for hyperlinks, etc. using entities from the Message
-// - [ ] Parametrize threshold for old news
+// - [x] Parametrize threshold for old news
 // - [ ] Exclude cross-posts between covered channels (i.e. deduplicate messages)
 // - [x] Keyboard shortcuts (j/k, etc)
-// - [ ] configurable cache location
+// - [x] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
 // - [ ] Correctly identify and attribute forwarded messages
 // - [x] Include photos/videos from forwarded messages
@@ -332,9 +332,11 @@ func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, e
 }
 
 type Worker struct {
-	Context context.Context
-	Log     *zap.Logger
-	Client  *tg.Client
+	Context         context.Context
+	Log             *zap.Logger
+	Client          *tg.Client
+	TmpPath         string
+	DurationSeconds int64
 }
 
 func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
@@ -380,7 +382,7 @@ func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
 }
 
 func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) (string, error) {
-	path := fmt.Sprintf("/tmp/%d.jpeg", id)
+	path := fmt.Sprintf("/%s/%d.jpeg", w.TmpPath, id)
 	_, err := os.Stat(path)
 	if err == nil {
 		//
@@ -552,7 +554,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 
 func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	var items []Item
-	thresholdDate := time.Now().Unix() - 24*3600
+	thresholdDate := time.Now().Unix() - w.DurationSeconds
 
 	channel, err := decodeChannel(ip)
 	if err != nil {
@@ -578,7 +580,6 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 
 	for _, m := range messages {
 		if int64(m.Date) < thresholdDate {
-			// old news from over 24 hours ago
 			continue
 		}
 
@@ -753,6 +754,8 @@ func groupItems(items []Item) (groups []Item) {
 func main() {
 	phone := flag.String("phone", "", "phone number to authenticate")
 	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
+	durationHours := flag.Int("hours", 28, "max age of messages to include, in hours")
+	tmpPath := flag.String("tempdir", "/tmp", "where to cache image files")
 	flag.Parse()
 
 	var channels []string
@@ -796,7 +799,13 @@ func main() {
 
 			log.Info("Login success")
 
-			w := Worker{Client: client.API(), Log: log, Context: ctx}
+			w := Worker{
+				Client:          client.API(),
+				Context:         ctx,
+				DurationSeconds: int64(*durationHours * 3600),
+				TmpPath:         *tmpPath,
+				Log:             log,
+			}
 			var items []Item
 
 			//			folders, err := w.Client.MessagesGetDialogFilters(ctx)
