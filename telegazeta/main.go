@@ -345,10 +345,8 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 	switch inner := mmc.(type) {
 	case *tg.MessagesChannelMessages:
 		innerMessages = inner.Messages
-		break
 	case *tg.MessagesMessagesSlice:
 		innerMessages = inner.Messages
-		break
 	}
 
 	for _, m := range innerMessages {
@@ -356,7 +354,6 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 		switch message := m.(type) {
 		case *tg.Message:
 			messages = append(messages, *message)
-			break
 		}
 	}
 
@@ -412,7 +409,6 @@ func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 				minutes := a.Duration / 60
 				seconds := a.Duration % 60
 				media.Duration = fmt.Sprintf("%02d:%02d", minutes, seconds)
-				break
 			}
 		}
 	}
@@ -480,9 +476,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 				} else {
 					haveMedia = true
 				}
-				break
 			}
-			break
 		case *tg.MessageMediaWebPage:
 			switch wp := messageMedia.Webpage.(type) {
 			case *tg.WebPage:
@@ -501,7 +495,6 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 					} else {
 						haveMedia = true
 					}
-					break
 				}
 
 				if !haveMedia {
@@ -514,10 +507,8 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 						} else {
 							haveMedia = true
 						}
-						break
 					}
 				}
-				break
 			}
 		case *tg.MessageMediaDocument:
 			switch doc := messageMedia.Document.(type) {
@@ -529,9 +520,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 				} else {
 					haveMedia = true
 				}
-				break
 			}
-			break
 		}
 	}
 
@@ -655,19 +644,15 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 			case *tg.MessageEntityBold:
 				builder.WriteString(fmt.Sprintf("<strong entity='%d'>", entityIndex))
 				stack = append(stack, Element{Tag: "</strong>", End: end})
-				break
 			case *tg.MessageEntityItalic:
 				builder.WriteString(fmt.Sprintf("<em entity='%d'>", entityIndex))
 				stack = append(stack, Element{Tag: "</em>", End: end})
-				break
 			case *tg.MessageEntityStrike:
 				builder.WriteString(fmt.Sprintf("<s entity='%d'>", entityIndex))
 				stack = append(stack, Element{Tag: "</s>", End: end})
-				break
 			case *tg.MessageEntityTextURL:
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, e.URL))
 				stack = append(stack, Element{Tag: "</a>", End: end})
-				break
 			case *tg.MessageEntityURL:
 				//
 				// Argh, now we have to work out what the URL is from the stuff
@@ -683,7 +668,6 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 				var url []rune = utf16.Decode(urlChunks)
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, string(url)))
 				stack = append(stack, Element{Tag: "</a>", End: end})
-				break
 			}
 
 			entityIndex += 1
@@ -716,7 +700,6 @@ func extractThumbnailSize(candidates []tg.PhotoSizeClass) (tg.PhotoSize, error) 
 		switch photoSize := photoSizeClass.(type) {
 		case *tg.PhotoSize:
 			sizes = append(sizes, *photoSize)
-			break
 		}
 	}
 	//
@@ -807,34 +790,6 @@ func main() {
 				Log:             log,
 			}
 			var items []Item
-
-			//			folders, err := w.Client.MessagesGetDialogFilters(ctx)
-			//			if err != nil {
-			//				return err
-			//			}
-			//			for _, dfc := range folders {
-			//				var folder tg.DialogFilter
-			//				ok := false
-			//				switch f := dfc.(type) {
-			//				case *tg.DialogFilter:
-			//					folder = *f
-			//					ok = true
-			//				}
-			//				if !ok {
-			//					continue
-			//				}
-			//
-			//				if folder.Title == "News" {
-			//					for _, ip := range folder.IncludePeers {
-			//						peerItems, err := w.processPeer(ip)
-			//						if err == nil {
-			//							items = append(items, peerItems[:]...)
-			//						} else {
-			//							log.Error(fmt.Sprintf("processPeer failed: %s", err))
-			//						}
-			//					}
-			//				}
-			//			}
 
 			for _, username := range channels {
 				peer, err := w.Client.ContactsResolveUsername(w.Context, username)
