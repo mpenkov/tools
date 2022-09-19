@@ -131,6 +131,13 @@ const templ = `
 
 			a { color: darkred; }
 			a:hover { color: red; }
+
+			blockquote {
+				margin: 1em 2em;
+				color: hsl(0, 0%, 25%);
+				border-left: 4px solid darkred;
+				padding-left: 1em;
+			}
 		</style>
 	</head>
 	<body>
