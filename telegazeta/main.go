@@ -58,6 +58,7 @@ type Media struct {
 	ThumbnailWidth  int
 	ThumbnailHeight int
 	Duration        string
+	PendingDownload tg.InputFileLocationClass
 }
 
 type Item struct {
@@ -385,7 +386,17 @@ func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
 	return "", "", fmt.Errorf("not implemented yet")
 }
 
-func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) (string, error) {
+func (w Worker) downloadThumbnail(location tg.InputFileLocationClass) (string, error) {
+	var id int64
+	switch location := location.(type) {
+	case *tg.InputPhotoFileLocation:
+		id = location.ID
+	case *tg.InputDocumentFileLocation:
+		id = location.ID
+	default:
+		return "", fmt.Errorf("unable to determine object ID from %s", location.String())
+	}
+
 	path := fmt.Sprintf("/%s/%d.jpeg", w.TmpPath, id)
 	_, err := os.Stat(path)
 	if err == nil {
@@ -406,7 +417,7 @@ func (w Worker) downloadThumbnail(id int64, location tg.InputFileLocationClass) 
 	}
 }
 
-func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
+func (w Worker) predownloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 	var media Media
 	if strings.HasPrefix(doc.MimeType, "video/") {
 		media.IsVideo = true
@@ -425,28 +436,22 @@ func (w Worker) downloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 	if err == nil {
 		media.ThumbnailWidth = thumbnailSize.W
 		media.ThumbnailHeight = thumbnailSize.H
-
-		location := tg.InputDocumentFileLocation{
+		media.PendingDownload = &tg.InputDocumentFileLocation{
 			ID:            doc.ID,
 			AccessHash:    doc.AccessHash,
 			FileReference: doc.FileReference,
 			ThumbSize:     thumbnailSize.Type,
-		}
-		path, err := w.downloadThumbnail(doc.ID, &location)
-		if err == nil {
-			media.Thumbnail = path
-			media.ThumbnailBase64 = imageAsBase64(path)
 		}
 	}
 
 	return media, err
 }
 
-func (w Worker) downloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
+func (w Worker) predownloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
 	var media Media
 	thumbnailSize, err := extractThumbnailSize(photo.Sizes)
 	if err == nil {
-		location := tg.InputPhotoFileLocation{
+		media.PendingDownload = &tg.InputPhotoFileLocation{
 			ID:            photo.ID,
 			AccessHash:    photo.AccessHash,
 			FileReference: photo.FileReference,
@@ -454,12 +459,6 @@ func (w Worker) downloadPhotoThumbnail(photo *tg.Photo) (Media, error) {
 		}
 		media.ThumbnailWidth = thumbnailSize.W
 		media.ThumbnailHeight = thumbnailSize.H
-
-		path, err := w.downloadThumbnail(photo.ID, &location)
-		if err == nil {
-			media.Thumbnail = path
-			media.ThumbnailBase64 = imageAsBase64(path)
-		}
 	}
 	return media, err
 }
@@ -477,7 +476,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 			switch photo := messageMedia.Photo.(type) {
 			case *tg.Photo:
 				var err error
-				media, err = w.downloadPhotoThumbnail(photo)
+				media, err = w.predownloadPhotoThumbnail(photo)
 				if err != nil {
 					w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 				} else {
@@ -496,7 +495,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 				switch doc := wp.Document.(type) {
 				case *tg.Document:
 					var err error
-					media, err = w.downloadDocumentThumbnail(doc)
+					media, err = w.predownloadDocumentThumbnail(doc)
 					if err != nil {
 						w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 					} else {
@@ -508,7 +507,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 					switch photo := wp.Photo.(type) {
 					case *tg.Photo:
 						var err error
-						media, err = w.downloadPhotoThumbnail(photo)
+						media, err = w.predownloadPhotoThumbnail(photo)
 						if err != nil {
 							w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 						} else {
@@ -521,7 +520,7 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 			switch doc := messageMedia.Document.(type) {
 			case *tg.Document:
 				var err error
-				media, err = w.downloadDocumentThumbnail(doc)
+				media, err = w.predownloadDocumentThumbnail(doc)
 				if err != nil {
 					w.Log.Error(fmt.Sprintf("unable to downloadDocumentThumbnail: %s", err))
 				} else {
@@ -819,6 +818,31 @@ func main() {
 				}
 			}
 
+			//
+			// Download thumbnails.  At this stage the items are ungrouped,
+			// so at most one Media per item.
+			//
+			log.Info("starting downloads")
+			var success_counter, error_counter int
+			for idx := range items {
+				if len(items[idx].Media) > 0 && items[idx].Media[0].PendingDownload != nil {
+					m := &items[idx].Media[0]
+					path, err := w.downloadThumbnail(m.PendingDownload)
+					if err == nil {
+						m.PendingDownload = nil
+						m.Thumbnail = path
+						m.ThumbnailBase64 = imageAsBase64(path)
+						success_counter++
+					} else {
+						error_counter++
+					}
+				}
+			}
+			log.Info(fmt.Sprintf("downloads complete, %d success %d failures", success_counter, error_counter))
+
+			//
+			// Some items are supposed to be grouped together, e.g. multiple photos in an album.
+			//
 			groupedItems := groupItems(items)
 
 			sort.Slice(groupedItems, func(i, j int) bool {
