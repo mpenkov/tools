@@ -3,6 +3,8 @@
 //
 // Each workspace keeps its own state.
 //
+// TODO: keep mouse pointer location using https://bbs.archlinux.org/viewtopic.php?id=270170
+//
 package main
 
 import (
