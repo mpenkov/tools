@@ -61,16 +61,22 @@ type Media struct {
 	PendingDownload tg.InputFileLocationClass
 }
 
+type Channel struct {
+	Domain string
+	Title  string
+}
+
 type Item struct {
-	Domain       string
-	MessageID    int
-	GroupedID    int64
-	ChannelTitle string
-	Text         string
-	Date         time.Time
-	Webpage      *tg.WebPage
-	HasWebpage   bool
-	Media        []Media
+	MessageID  int
+	GroupedID  int64
+	Channel    Channel
+	Text       string
+	Date       time.Time
+	Webpage    *tg.WebPage
+	HasWebpage bool
+	Media      []Media
+	FwdFrom    Channel
+	Forwarded  bool
 }
 
 const templ = `
@@ -150,16 +156,18 @@ const templ = `
 					<span class="date"><a href='{{$item | tgUrl}}'>{{$item.Date | formatDate}}</a></span>
 				</span>
 				<span class='channel'>
-					<span class="domain">@{{$item.Domain}}</span>
-					<span class="channel-title">({{$item.ChannelTitle}})</span>
+					<span class="domain">@{{$item.Channel.Domain}}</span>
+					<span class="channel-title">({{$item.Channel.Title}})</span>
 				</span>
 				<span class='message'>
+				{{if $item.Forwarded}}
+					(Forwarded from @{{$item.FwdFrom.Domain}})
+				{{end}}
 					{{$item.Text | markup}}
 				{{if $item.HasWebpage}}
 					<blockquote class='webpage'>
 						<span class='link'><a href='{{$item.Webpage.URL}}' target='_blank'>{{$item.Webpage.Title}}</a></span>
 						<span class='description'>{{$item.Webpage.Description | markup}}</span>
-					</blockquote>
 				{{end}}
 					<span class="thumbnails">
 				{{range $item.Media}}
@@ -185,6 +193,9 @@ const templ = `
 					{{end}}
 				{{end}}
 					</span>
+				{{if $item.HasWebpage}}
+					</blockquote>
+				{{end}}
 				</span>
 			</span>
 			{{end}}
@@ -247,7 +258,7 @@ func formatTime(date time.Time) string {
 }
 
 func tgUrl(item Item) template.URL {
-	return template.URL(fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Domain, item.MessageID))
+	return template.URL(fmt.Sprintf("tg://resolve?domain=%s&post=%d", item.Channel.Domain, item.MessageID))
 }
 
 func imageAsBase64(path string) string {
@@ -579,8 +590,21 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 		}
 
 		item, _ := w.processMessage(m)
-		item.Domain = channelDomain
-		item.ChannelTitle = channelTitle
+		item.Channel = Channel{Domain: channelDomain, Title: channelTitle}
+
+		//
+		// TODO: this part is not quite 100% working yet...
+		//
+		if fwdFrom, ok := m.GetFwdFrom(); ok {
+			if fromName, ok := fwdFrom.GetFromName(); ok {
+				item.FwdFrom = Channel{Domain: fromName}
+			} else if fromName, ok := fwdFrom.GetPostAuthor(); ok {
+				item.FwdFrom = Channel{Domain: fromName}
+			} else {
+				item.FwdFrom = Channel{Domain: "???"}
+			}
+			item.Forwarded = true
+		}
 		for i := range item.Media {
 			item.Media[i].URL = tgUrl(item)
 		}
@@ -592,7 +616,7 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 				"handled MessageID %d (%s) from Domain %s (%d char)",
 				item.MessageID,
 				item.Date,
-				item.Domain,
+				item.Channel.Domain,
 				len(item.Text),
 			),
 		)
