@@ -15,11 +15,11 @@
 // - [ ] Show channel thumbnails
 // - [x] Markup for hyperlinks, etc. using entities from the Message
 // - [x] Parametrize threshold for old news
-// - [ ] Exclude cross-posts between covered channels (i.e. deduplicate messages)
+// - [x] Exclude cross-posts between covered channels (i.e. deduplicate messages)
 // - [x] Keyboard shortcuts (j/k, etc)
 // - [x] configurable cache location
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
-// - [ ] Correctly identify and attribute forwarded messages
+// - [x] Correctly identify and attribute forwarded messages
 // - [x] Include photos/videos from forwarded messages
 //
 package main
@@ -43,6 +43,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh/terminal"
 
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/examples"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
@@ -151,7 +152,7 @@ const templ = `
 	<body>
 		<div class='item-list'>
 			{{range $index, $item := .Items}}
-			<span class='item' id="item-{{$index}}">
+			<span class='item' id="item-{{$index}}" MessageID="{{$item.MessageID}}">
 				<span class='datestamp'>
 					<span class="time"><a href='{{$item | tgUrl}}'>{{$item.Date | formatTime}}</a></span>
 					<span class="date"><a href='{{$item | tgUrl}}'>{{$item.Date | formatDate}}</a></span>
@@ -356,6 +357,7 @@ type Worker struct {
 	Log             *zap.Logger
 	Client          *tg.Client
 	TmpPath         string
+	DumpPath        string
 	DurationSeconds int64
 }
 
@@ -374,7 +376,32 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 		switch message := m.(type) {
 		case *tg.Message:
 			messages = append(messages, *message)
+
+			//
+			// Dump messages for collecting test data
+			//
+			if w.DumpPath != "" {
+				var buf bin.Buffer
+				err = message.Encode(&buf)
+				if err != nil {
+					w.Log.Error(fmt.Sprintf("unable to encode message %d: %s", message.ID, err))
+					continue
+				}
+
+				path := fmt.Sprintf("%s/%d.bin", w.DumpPath, message.ID)
+				fout, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+				if err != nil {
+					w.Log.Error(fmt.Sprintf("unable to open %q for writing: %s", path, err))
+					continue
+				}
+				defer fout.Close()
+
+				fout.Write(buf.Buf)
+				w.Log.Info(fmt.Sprintf("wrote %d bytes to %q", len(buf.Buf), path))
+			}
+
 		}
+
 	}
 
 	return messages, err
@@ -593,18 +620,23 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 		item, _ := w.processMessage(m)
 		item.Channel = Channel{Domain: channelDomain, Title: channelTitle}
 
-		//
-		// TODO: this part is not quite 100% working yet...
-		//
 		if fwdFrom, ok := m.GetFwdFrom(); ok {
-			if fromName, ok := fwdFrom.GetFromName(); ok {
-				item.FwdFrom = Channel{Domain: fromName}
-			} else if fromName, ok := fwdFrom.GetPostAuthor(); ok {
-				item.FwdFrom = Channel{Domain: fromName}
-			} else {
-				item.FwdFrom = Channel{Domain: "???"}
+			switch fromPeer := fwdFrom.FromID.(type) {
+			case *tg.PeerChannel:
+				inputChannel := tg.InputChannelFromMessage{
+					ChannelID: fromPeer.ChannelID,
+					MsgID:     m.ID,
+					Peer:      ip,
+				}
+				fullInfo, err := w.Client.ChannelsGetFullChannel(w.Context, &inputChannel)
+				if err == nil && len(fullInfo.Chats) > 0 {
+					switch chat := fullInfo.Chats[0].(type) {
+					case *tg.Channel:
+						item.FwdFrom = Channel{Domain: chat.Username, Title: chat.Title}
+						item.Forwarded = true
+					}
+				}
 			}
-			item.Forwarded = true
 		}
 		for i := range item.Media {
 			item.Media[i].URL = tgUrl(item)
@@ -765,11 +797,35 @@ func groupItems(items []Item) (groups []Item) {
 	return groups
 }
 
+func dedup(items []Item) (uniq []Item) {
+	//
+	// Deduplicating based on message text isn't ideal, but it's the best way
+	// I can think of now.  One particular problem is that if the source of
+	// the forward edits their message, then the texts are now different.
+	//
+	var seen map[string]bool = make(map[string]bool)
+	for _, item := range items {
+		if _, ok := seen[item.Text]; ok {
+			continue
+		}
+		uniq = append(uniq, item)
+
+		//
+		// Some items contain photos only, we don't want to discard them here
+		//
+		if len(item.Text) > 0 {
+			seen[item.Text] = true
+		}
+	}
+	return uniq
+}
+
 func main() {
 	phone := flag.String("phone", "", "phone number to authenticate")
 	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
 	durationHours := flag.Int("hours", 28, "max age of messages to include, in hours")
 	tmpPath := flag.String("tempdir", "/tmp", "where to cache image files")
+	dumpPath := flag.String("dumpdir", "", "where to dump messages")
 	flag.Parse()
 
 	var channels []string
@@ -816,6 +872,7 @@ func main() {
 			w := Worker{
 				Client:          client.API(),
 				Context:         ctx,
+				DumpPath:        *dumpPath,
 				DurationSeconds: int64(*durationHours * 3600),
 				TmpPath:         *tmpPath,
 				Log:             log,
@@ -842,6 +899,17 @@ func main() {
 					}
 				}
 			}
+
+			//
+			// Sort before deduplication to favor original (non-forwarded)
+			// messages
+			//
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Date.Unix() < items[j].Date.Unix()
+			})
+			before := len(items)
+			items = dedup(items)
+			log.Info(fmt.Sprintf("removed %d items as duplicates", before-len(items)))
 
 			//
 			// Download thumbnails.  At this stage the items are ungrouped,
