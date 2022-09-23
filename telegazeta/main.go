@@ -83,6 +83,7 @@ const templ = `
 <!DOCTYPE html>
 <html>
 	<head>
+		<meta charset="utf-8">
 		<style>
 			body { font-family: Helvetica; }
 			.item-list { display: grid; grid-gap: 0px; }
