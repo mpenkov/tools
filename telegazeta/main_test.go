@@ -1,8 +1,9 @@
 package main
 
 import (
+	"fmt"
+	_ "log"
 	"os"
-	"log"
 	"testing"
 
 	"github.com/gotd/td/bin"
@@ -42,16 +43,27 @@ func TestDedup(t *testing.T) {
 }
 
 func TestRealDedup(t *testing.T) {
-	//
-	// NB. Message text is slightly different
-	//
-	m1, _ := loadMessage("testdata/8668.bin")
-	m2, _ := loadMessage("testdata/64905.bin")
-	log.Printf("%q", m1.Message)
-	log.Printf("%q", m2.Message)
-	items := []Item{Item{Text: m1.Message}, Item{Text: m2.Message}}
-	uniq := dedup(items)
-	if len(uniq) != 1 {
-		t.Errorf("deduplication failed want: 1 got: %d", len(uniq))
+	var testCases = []struct {
+		messageID []string
+		want      int
+	}{
+		{[]string{"8668", "64905"}, 1},
+		{[]string{"8433", "16371"}, 1},
+	}
+	for idx, tc := range testCases {
+		var items []Item
+		for _, id := range tc.messageID {
+			filename := fmt.Sprintf("testdata/%s.bin", id)
+			m, err := loadMessage(filename)
+			if err != nil {
+				t.Fatalf("unable to load %q: %s", filename, err)
+			}
+			item := mkitem(&m)
+			items = append(items, item)
+		}
+		uniq := dedup(items)
+		if len(uniq) != tc.want {
+			t.Errorf("dedup(%d) failed want: %d got: %d", idx, tc.want, len(uniq))
+		}
 	}
 }

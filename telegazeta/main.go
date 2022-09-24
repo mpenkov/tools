@@ -569,15 +569,10 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		}
 	}
 
-	// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
-	tm := time.Unix(int64(m.Date), 0)
-	item := Item{
-		MessageID:  m.ID,
-		GroupedID:  m.GroupedID,
-		Text:       highlightEntities(m.Message, m.Entities),
-		Date:       tm,
-		Webpage:    webpage,
-		HasWebpage: webpage != nil,
+	item := mkitem(&m)
+	if webpage != nil {
+		item.Webpage = webpage
+		item.HasWebpage = true
 	}
 	if haveMedia {
 		item.Media = append(item.Media, media)
@@ -656,6 +651,18 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	}
 
 	return items, nil
+}
+
+func mkitem(m *tg.Message) Item {
+	// https://stackoverflow.com/questions/24987131/how-to-parse-unix-timestamp-to-time-time
+	tm := time.Unix(int64(m.Date), 0)
+	item := Item{
+		MessageID: m.ID,
+		GroupedID: m.GroupedID,
+		Text:      highlightEntities(m.Message, m.Entities),
+		Date:      tm,
+	}
+	return item
 }
 
 func highlightEntities(message string, entities []tg.MessageEntityClass) string {
@@ -799,13 +806,25 @@ func groupItems(items []Item) (groups []Item) {
 
 func dedup(items []Item) (uniq []Item) {
 	//
-	// Deduplicating based on message text isn't ideal, but it's the best way
-	// I can think of now.  One particular problem is that if the source of
-	// the forward edits their message, then the texts are now different.
+	// Deduplicating based on the full message text isn't ideal, because if the
+	// source of the forward edits their message, then the texts are now
+	// different.
 	//
-	var seen map[string]bool = make(map[string]bool)
+	// A better way would be to deduplicate on the datestamps, but it's tricky,
+	// because we don't have the datestamp of the original message available
+	// here.  Using the message prefix (40 chars or so) may be enough.
+	//
+	var seen = make(map[string]bool)
 	for _, item := range items {
-		if _, ok := seen[item.Text]; ok {
+		//
+		// Argh, no min function in golang...
+		//
+		numChars := 40
+		if len(item.Text) < numChars {
+			numChars = len(item.Text)
+		}
+		key := fmt.Sprintf("%s", item.Text[:numChars])
+		if _, ok := seen[key]; ok {
 			continue
 		}
 		uniq = append(uniq, item)
@@ -814,7 +833,7 @@ func dedup(items []Item) (uniq []Item) {
 		// Some items contain photos only, we don't want to discard them here
 		//
 		if len(item.Text) > 0 {
-			seen[item.Text] = true
+			seen[key] = true
 		}
 	}
 	return uniq
