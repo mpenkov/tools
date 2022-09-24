@@ -111,10 +111,6 @@ const templ = `
 				grid-gap: 10px;
 			}
 			.image-thumbnail { border-radius: 5%; }
-			.video-thumbnail {
-				border-left: 5px dashed black;
-				border-right: 5px dashed black;
-			}
 
 			/* https://stackoverflow.com/questions/44275502/overlay-text-on-image-html#44275595 */
 			.container { position: relative; }
@@ -128,6 +124,7 @@ const templ = `
 				font-size: xx-large;
 				padding: 5px;
 				margin: 5px;
+				opacity: 50%;
 			}
 
 			.datestamp { margin: 10px; font-weight: bold; display: flex; flex-direction: column; gap: 10px; }
@@ -136,6 +133,7 @@ const templ = `
 			span.date { font-size:  small; }
 			.channel { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 			.channel-title { font-size: small; color: gray; }
+			.channel .forwarded { font-style: italic; }
 			.message p { margin-top: 10px; }
 
 			a { color: darkred; }
@@ -158,13 +156,15 @@ const templ = `
 					<span class="date"><a href='{{$item | tgUrl}}'>{{$item.Date | formatDate}}</a></span>
 				</span>
 				<span class='channel'>
+				{{if $item.Forwarded}}
+					<span class="domain forwarded">@{{$item.FwdFrom.Domain}}</span>
+					<span class="channel-title forwarded">({{$item.FwdFrom.Title}})</span>
+				{{else}}
 					<span class="domain">@{{$item.Channel.Domain}}</span>
 					<span class="channel-title">({{$item.Channel.Title}})</span>
+				{{end}}
 				</span>
 				<span class='message'>
-				{{if $item.Forwarded}}
-					(Forwarded from @{{$item.FwdFrom.Domain}})
-				{{end}}
 					{{$item.Text | markup}}
 				{{if $item.HasWebpage}}
 					<blockquote class='webpage'>
