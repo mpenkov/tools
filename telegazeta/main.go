@@ -80,6 +80,12 @@ type Item struct {
 	Forwarded  bool
 }
 
+//
+// Empirically determined constant.  Started at 1 and kept increasing it until
+// we stopped getting FLOOD_WAIT responses from Telegram.
+//
+const messageSleepTime time.Duration = 2 * time.Second
+
 const templ = `
 <!DOCTYPE html>
 <html>
@@ -578,6 +584,13 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		item.Media = append(item.Media, media)
 	}
 
+	//
+	// Avoid beeing FLOOD_WAITED
+	// TODO: detect FLOOD_WAIT errors and properly handle them
+	// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
+	//
+	time.Sleep(messageSleepTime)
+
 	return item, nil
 }
 
@@ -623,6 +636,10 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 					MsgID:     m.ID,
 					Peer:      ip,
 				}
+				//
+				// TODO: cache the Channel for each ChannelID and avoid
+				// unnecessary requests here.
+				//
 				fullInfo, err := w.Client.ChannelsGetFullChannel(w.Context, &inputChannel)
 				if err == nil && len(fullInfo.Chats) > 0 {
 					switch chat := fullInfo.Chats[0].(type) {
