@@ -84,7 +84,7 @@ type Item struct {
 // Empirically determined constant.  Started at 1 and kept increasing it until
 // we stopped getting FLOOD_WAIT responses from Telegram.
 //
-const messageSleepTime time.Duration = 2 * time.Second
+const messageSleepTime time.Duration = 1 * time.Second
 
 const templ = `
 <!DOCTYPE html>
@@ -365,6 +365,7 @@ type Worker struct {
 	TmpPath         string
 	DumpPath        string
 	DurationSeconds int64
+	ChannelCache    map[int64]Channel
 }
 
 func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
@@ -607,6 +608,7 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	if err != nil {
 		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
 	}
+	w.ChannelCache[channel.ChannelID] = Channel{channelDomain, channelTitle}
 
 	request := tg.MessagesGetHistoryRequest{Peer: ip}
 	history, err := w.Client.MessagesGetHistory(w.Context, &request)
@@ -629,23 +631,29 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 		item.Channel = Channel{Domain: channelDomain, Title: channelTitle}
 
 		if fwdFrom, ok := m.GetFwdFrom(); ok {
+			var chid int64
+
 			switch fromPeer := fwdFrom.FromID.(type) {
 			case *tg.PeerChannel:
+				chid = fromPeer.ChannelID
+			}
+
+			if channelInfo, ok := w.ChannelCache[chid]; ok {
+				item.FwdFrom = channelInfo
+				item.Forwarded = true
+			} else {
 				inputChannel := tg.InputChannelFromMessage{
-					ChannelID: fromPeer.ChannelID,
+					ChannelID: chid,
 					MsgID:     m.ID,
 					Peer:      ip,
 				}
-				//
-				// TODO: cache the Channel for each ChannelID and avoid
-				// unnecessary requests here.
-				//
 				fullInfo, err := w.Client.ChannelsGetFullChannel(w.Context, &inputChannel)
 				if err == nil && len(fullInfo.Chats) > 0 {
 					switch chat := fullInfo.Chats[0].(type) {
 					case *tg.Channel:
 						item.FwdFrom = Channel{Domain: chat.Username, Title: chat.Title}
 						item.Forwarded = true
+						w.ChannelCache[chid] = item.FwdFrom
 					}
 				}
 			}
@@ -906,6 +914,7 @@ func main() {
 			log.Info("Login success")
 
 			w := Worker{
+				ChannelCache:    make(map[int64]Channel),
 				Client:          client.API(),
 				Context:         ctx,
 				DumpPath:        *dumpPath,
