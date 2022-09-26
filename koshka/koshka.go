@@ -6,7 +6,7 @@ package koshka
 // [x] Integrate with autocompletion
 // [ ] Support for S3 versions
 // [x] Support for aliases
-// [ ] Handle HTTP/S
+// [.] Handle HTTP/S
 // [ ] Handle local files
 // [ ] Any other backends?
 // [.] Tests!!
@@ -20,7 +20,9 @@ package koshka
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -46,6 +48,10 @@ func Suggest(prefix string) (candidates []string, err error) {
 	if err != nil {
 		return []string{}, err
 	}
+
+	//
+	// TODO: parse HTTP directory listings for autocompletion
+	//
 	if parsedUrl.Scheme == "s3" {
 		candidates, err = s3_list(prefix)
 	} else {
@@ -64,12 +70,20 @@ func Suggest(prefix string) (candidates []string, err error) {
 }
 
 func Cat(rawUrl string) error {
+	if rawUrl == "-" {
+		_, err := io.Copy(os.Stdout, os.Stdin)
+		return err
+	}
 	parsedUrl, err := url.Parse(rawUrl)
 	if err != nil {
 		return err
 	}
-	if parsedUrl.Scheme == "s3" {
+	switch parsedUrl.Scheme {
+	case "s3":
 		return s3_cat(rawUrl)
+	case "http":
+	case "https":
+		return http_cat(rawUrl)
 	}
 	return fmt.Errorf("cat functionality for scheme %s not implemented yet", parsedUrl.Scheme)
 }
