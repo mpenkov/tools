@@ -2,7 +2,7 @@
 //
 // TODO:
 //
-// - [ ] Pagination (we can only fetch 20 messages from a single channel at a time)
+// - [x] Pagination (we can only fetch 20 messages from a single channel at a time)
 // - [x] Output HTML instead of text
 // - [x] Use proper Golang templates when outputting HTML
 // - [x] Extract headlines (first line in the message) and mark them up with CSS
@@ -84,7 +84,7 @@ type Item struct {
 // Empirically determined constant.  Started at 1 and kept increasing it until
 // we stopped getting FLOOD_WAIT responses from Telegram.
 //
-const messageSleepTime time.Duration = 1 * time.Second
+const messageSleepTime time.Duration = 250 * time.Millisecond
 
 const templ = `
 <!DOCTYPE html>
@@ -610,23 +610,43 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	}
 	w.ChannelCache[channel.ChannelID] = Channel{channelDomain, channelTitle}
 
-	request := tg.MessagesGetHistoryRequest{Peer: ip}
-	history, err := w.Client.MessagesGetHistory(w.Context, &request)
-	if err != nil {
-		return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
-	}
+	//
+	// Page through the message history until we reach messages that are too old.
+	// Telegram typically serves 20 messages per request.
+	//
+	offset := 0
+	messages := []tg.Message{}
+	for {
+		request := tg.MessagesGetHistoryRequest{Peer: ip, AddOffset: offset}
+		history, err := w.Client.MessagesGetHistory(w.Context, &request)
+		if err != nil {
+			return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
+		}
 
-	messages, err := w.decodeMessages(history)
-	if err != nil {
-		// log.Debug(history.String())
-		return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
+		response, err := w.decodeMessages(history)
+		if err != nil {
+			// log.Debug(history.String())
+			return []Item{}, fmt.Errorf("decodeMessages of type %q for channel %q failed: %w", history.TypeName(), channelTitle, err)
+		}
+
+		stop := false
+		for _, m := range(response) {
+			if int64(m.Date) < thresholdDate {
+				stop = true
+				break
+			} else {
+				messages = append(messages, m)
+			}
+		}
+
+		if stop {
+			break
+		} else {
+			offset += len(response)
+		}
 	}
 
 	for _, m := range messages {
-		if int64(m.Date) < thresholdDate {
-			continue
-		}
-
 		item, _ := w.processMessage(m)
 		item.Channel = Channel{Domain: channelDomain, Title: channelTitle}
 
