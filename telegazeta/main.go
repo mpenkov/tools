@@ -84,7 +84,7 @@ type Item struct {
 // Empirically determined constant.  Started at 1 and kept increasing it until
 // we stopped getting FLOOD_WAIT responses from Telegram.
 //
-const messageSleepTime time.Duration = 250 * time.Millisecond
+const messageSleepTime time.Duration = 100 * time.Millisecond
 
 const templ = `
 <!DOCTYPE html>
