@@ -3,17 +3,17 @@
 //
 // Each workspace keeps its own state.
 //
-// TODO: keep mouse pointer location using https://bbs.archlinux.org/viewtopic.php?id=270170
-//
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
-	"encoding/json"
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -22,8 +22,10 @@ var ibusEngine = flag.String("ibusengine", "", "Change the IBus engine for the c
 var touchpadOff = flag.String("touchpadoff", "", "Change the TouchpadOff flag for the current workspace")
 
 type state struct {
-	IbusEngine string
-	TouchpadOff string
+	IbusEngine     string
+	TouchpadOff    string
+	MouseLocationX int
+	MouseLocationY int
 }
 
 var defaultState = state{IbusEngine: "xkb:jp::jpn", TouchpadOff: "0"}
@@ -93,7 +95,7 @@ func getTouchpadOff() string {
 	for _, line := range strings.Split(stdout, "\n") {
 		if strings.Contains(line, "TouchpadOff") {
 			idx := strings.LastIndex(line, "= ")
-			return line[idx+2:idx+3]
+			return line[idx+2 : idx+3]
 		}
 	}
 	log.Fatalf("could not parse synclient output")
@@ -117,6 +119,38 @@ func setTouchpadOff(value string) string {
 	return value
 }
 
+func getMouseLocation() (int, int) {
+	cmd := exec.Command("xdotool", "getmouselocation")
+	stdoutBytes, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("xdotool getmouselocation failed: %s", err)
+	}
+
+	coords := []int{9999, 9999}
+	patterns := []*regexp.Regexp{regexp.MustCompile(`x:\d+`), regexp.MustCompile(`y:\d+`)}
+
+	for i := range patterns {
+		location := patterns[i].FindIndex(stdoutBytes)
+		if location != nil {
+			start := location[0] + 2
+			end := location[1]
+			coords[i], _ = strconv.Atoi(string(stdoutBytes[start:end]))
+		}
+	}
+
+	return coords[0], coords[1]
+}
+
+func setMouseLocation(xPos, yPos int) {
+	fmt.Printf("setMouseLocation(%d, %d)\n", xPos, yPos)
+	x := fmt.Sprintf("%d", xPos)
+	y := fmt.Sprintf("%d", yPos)
+	cmd := exec.Command("xdotool", "mousemove", x, y)
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("xdotool mousemove failed: %s", err)
+	}
+}
+
 func getCurrentWorkspace() int {
 	cmd := exec.Command("i3-msg", "-t", "get_workspaces")
 	stdout, err := cmd.Output()
@@ -124,11 +158,11 @@ func getCurrentWorkspace() int {
 		log.Fatalf("unable to get current workspace: %s", err)
 	}
 	type workspace struct {
-		Num int
+		Num     int
 		Focused bool
 	}
 	var result []workspace
-	
+
 	err = json.Unmarshal(stdout, &result)
 	if err != nil {
 		log.Fatalf("unable to decode output from i3-msg: %s", err)
@@ -148,18 +182,34 @@ func main() {
 	flag.Parse()
 
 	if *workspace != -1 {
+		//
+		// Save the mouse location for the current workspace before switching
+		// to the new workspace and loading its settings.
+		//
+		currentWorkspace := getCurrentWorkspace()
+		state, err := load(currentWorkspace)
+		if err != nil {
+			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
+			state = defaultState
+		}
+		x, y := getMouseLocation()
+		state.MouseLocationX = x
+		state.MouseLocationY = y
+		save(currentWorkspace, state)
+
 		cmd := exec.Command("i3-msg", "-t", "command", fmt.Sprintf("workspace number %d", *workspace))
 		if err := cmd.Run(); err != nil {
 			log.Fatal(err)
 		}
 
-		state, err := load(*workspace)
+		state, err = load(*workspace)
 		if err != nil {
 			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
 			state = defaultState
 		}
 		setIbusEngine(state.IbusEngine)
 		setTouchpadOff(state.TouchpadOff)
+		setMouseLocation(state.MouseLocationX, state.MouseLocationY)
 	}
 
 	if *ibusEngine != "" {
