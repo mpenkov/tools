@@ -887,7 +887,7 @@ func dedup(items []Item) (uniq []Item) {
 func main() {
 	phone := flag.String("phone", "", "phone number to authenticate")
 	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
-	durationHours := flag.Int("hours", 28, "max age of messages to include, in hours")
+	durationHours := flag.Int("hours", 24, "max age of messages to include, in hours")
 	tmpPath := flag.String("tempdir", "/tmp", "where to cache image files")
 	dumpPath := flag.String("dumpdir", "", "where to dump messages")
 	flag.Parse()
