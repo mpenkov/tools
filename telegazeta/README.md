@@ -28,7 +28,7 @@ Use j and k (vim forever) to scroll up and down.
 
 # Demo
 
-See [here](https://raw.githubusercontent.com/mpenkov/tools/master/telegazeta/testdata/demo.html).
+See [here](http://htmlpreview.github.io/?https://raw.githubusercontent.com/mpenkov/tools/master/telegazeta/testdata/demo.html).
 It was generated using the following command:
 
     $ cat testdata/channels.txt
