@@ -21,6 +21,7 @@
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
 // - [x] Correctly identify and attribute forwarded messages
 // - [x] Include photos/videos from forwarded messages
+// - [ ] Detect and handle FLOOD_WAIT responses https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
 //
 package main
 
@@ -84,7 +85,7 @@ type Item struct {
 // Empirically determined constant.  Started at 1 and kept increasing it until
 // we stopped getting FLOOD_WAIT responses from Telegram.
 //
-const messageSleepTime time.Duration = 100 * time.Millisecond
+const messageSleepTime time.Duration = 200 * time.Millisecond
 
 const templ = `
 <!DOCTYPE html>
@@ -585,11 +586,6 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		item.Media = append(item.Media, media)
 	}
 
-	//
-	// Avoid beeing FLOOD_WAITED
-	// TODO: detect FLOOD_WAIT errors and properly handle them
-	// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
-	//
 	time.Sleep(messageSleepTime)
 
 	return item, nil
