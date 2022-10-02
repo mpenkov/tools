@@ -21,7 +21,7 @@
 // - [ ] try harder to split the first paragraph, maybe try a sentence split?
 // - [x] Correctly identify and attribute forwarded messages
 // - [x] Include photos/videos from forwarded messages
-// - [ ] Detect and handle FLOOD_WAIT responses https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
+// - [x] Detect and handle FLOOD_WAIT responses
 //
 package main
 
@@ -36,6 +36,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -81,11 +82,10 @@ type Item struct {
 	Forwarded  bool
 }
 
-//
-// Empirically determined constant.  Started at 1 and kept increasing it until
-// we stopped getting FLOOD_WAIT responses from Telegram.
-//
-const messageSleepTime time.Duration = 200 * time.Millisecond
+const (
+	FLOOD_WAIT   int = 420
+	NUM_ATTEMPTS int = 5
+)
 
 const templ = `
 <!DOCTYPE html>
@@ -367,6 +367,7 @@ type Worker struct {
 	DumpPath        string
 	DurationSeconds int64
 	ChannelCache    map[int64]Channel
+	RequestCounter  int
 }
 
 func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
@@ -415,12 +416,79 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 	return messages, err
 }
 
-func (w Worker) getChannelInfo(input tg.InputChannel) (string, string, error) {
+type WorkerRequest func() error
+
+type tgError interface {
+	GetCode() int
+	GetText() string
+}
+
+//
+// Handle the request while being mindful of FLOOD_WAIT errors.
+// If we encounter one of these, then attempt to retry intelligently after sleeping.
+//
+func (w Worker) handleRequest(request WorkerRequest) error {
+	var err error
+
+	w.RequestCounter++
+
+	for attempt := 0; attempt < NUM_ATTEMPTS; attempt++ {
+		err = request()
+		if err == nil {
+			return nil
+		}
+
+		w.Log.Info(fmt.Sprintf("handleRequest err: %s", err))
+		if err, ok := err.(tgError); ok {
+			code := err.GetCode()
+			text := err.GetText()
+			w.Log.Info(fmt.Sprintf("handleRequest code: %d text: %q", code, text))
+			if code == FLOOD_WAIT {
+				//
+				// The time we should sleep depends on how many requests we've made
+				// since the last FLOOD_WAIT, as long as the error text, e.g.
+				// FLOOD_WAIT_5
+				//
+				// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
+				//
+				w.Log.Info(fmt.Sprintf("handling %s", text))
+				lastIndex := strings.LastIndex(err.GetText(), "_")
+				fwSeconds := 0
+				if lastIndex != -1 {
+					if s, err := strconv.Atoi(text[lastIndex+1:]); err == nil {
+						fwSeconds = s
+					}
+				}
+
+				var sleepSeconds time.Duration = time.Duration(w.RequestCounter) + time.Duration(fwSeconds)
+				w.Log.Info(fmt.Sprintf("sleeping for %ds", sleepSeconds))
+				time.Sleep(sleepSeconds * time.Second)
+				w.RequestCounter = 0
+				continue
+			}
+		}
+
+		//
+		// Not a FLOOD_WAIT error, so give up immediately.
+		//
+		return err
+	}
+
+	return fmt.Errorf("gave up after %d attempts, last error: %w", NUM_ATTEMPTS, err)
+}
+
+func (w Worker) getChannelInfo(input tg.InputChannelClass) (string, string, error) {
 	var result *tg.MessagesChatFull
 
-	result, err := w.Client.ChannelsGetFullChannel(w.Context, &input)
+	request := func() error {
+		var err error
+		result, err = w.Client.ChannelsGetFullChannel(w.Context, input)
+		return err
+	}
+
+	err := w.handleRequest(request)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("ChannelsGetFullChannel failed: %w", err)
 	}
 
 	switch thing := result.Chats[0].(type) {
@@ -453,6 +521,7 @@ func (w Worker) downloadThumbnail(location tg.InputFileLocationClass) (string, e
 		return path, nil
 	} else {
 		w.Log.Info(fmt.Sprintf("downloading thumbnail for id %d", id))
+		w.RequestCounter++
 		dloader := downloader.NewDownloader()
 		builder := dloader.Download(w.Client, location)
 		_, err := builder.ToPath(w.Context, path)
@@ -586,8 +655,6 @@ func (w Worker) processMessage(m tg.Message) (Item, error) {
 		item.Media = append(item.Media, media)
 	}
 
-	time.Sleep(messageSleepTime)
-
 	return item, nil
 }
 
@@ -595,16 +662,25 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	var items []Item
 	thresholdDate := time.Now().Unix() - w.DurationSeconds
 
-	channel, err := decodeChannel(ip)
+	var channelTitle string
+	var channelDomain string
+	var err error
+
+	inputPeerChannel, ok := ip.(*tg.InputPeerChannel)
+	if !ok {
+		return []Item{}, fmt.Errorf("unable to processPeer: %s", ip)
+	}
+	inputChannel := tg.InputChannel{
+		AccessHash: inputPeerChannel.AccessHash,
+		ChannelID:  inputPeerChannel.ChannelID,
+	}
+	channelTitle, channelDomain, err = w.getChannelInfo(&inputChannel)
+	w.Log.Info(fmt.Sprintf("title: %q domain: %q err: %s", channelTitle, channelDomain, err))
 	if err != nil {
-		return []Item{}, fmt.Errorf("unable to decodeChannel: %w", err)
+		return []Item{}, fmt.Errorf("unable to getChannelInfo: %w", err)
 	}
 
-	channelTitle, channelDomain, err := w.getChannelInfo(channel)
-	if err != nil {
-		return []Item{}, fmt.Errorf("unable to getChannelFull: %w", err)
-	}
-	w.ChannelCache[channel.ChannelID] = Channel{channelDomain, channelTitle}
+	w.ChannelCache[inputChannel.ChannelID] = Channel{channelDomain, channelTitle}
 
 	//
 	// Page through the message history until we reach messages that are too old.
@@ -613,8 +689,14 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 	offset := 0
 	messages := []tg.Message{}
 	for {
-		request := tg.MessagesGetHistoryRequest{Peer: ip, AddOffset: offset}
-		history, err := w.Client.MessagesGetHistory(w.Context, &request)
+		var history tg.MessagesMessagesClass
+		request := func() error {
+			var err error
+			getHistoryRequest := tg.MessagesGetHistoryRequest{Peer: ip, AddOffset: offset}
+			history, err = w.Client.MessagesGetHistory(w.Context, &getHistoryRequest)
+			return err
+		}
+		err := w.handleRequest(request)
 		if err != nil {
 			return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
 		}
@@ -626,7 +708,7 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 		}
 
 		stop := false
-		for _, m := range(response) {
+		for _, m := range response {
 			if int64(m.Date) < thresholdDate {
 				stop = true
 				break
@@ -663,14 +745,12 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 					MsgID:     m.ID,
 					Peer:      ip,
 				}
-				fullInfo, err := w.Client.ChannelsGetFullChannel(w.Context, &inputChannel)
-				if err == nil && len(fullInfo.Chats) > 0 {
-					switch chat := fullInfo.Chats[0].(type) {
-					case *tg.Channel:
-						item.FwdFrom = Channel{Domain: chat.Username, Title: chat.Title}
-						item.Forwarded = true
-						w.ChannelCache[chid] = item.FwdFrom
-					}
+
+				title, username, err := w.getChannelInfo(&inputChannel)
+				if err == nil {
+					item.FwdFrom = Channel{Domain: username, Title: title}
+					item.Forwarded = true
+					w.ChannelCache[chid] = item.FwdFrom
 				}
 			}
 		}
@@ -941,11 +1021,14 @@ func main() {
 			var items []Item
 
 			for _, username := range channels {
+				log.Info(fmt.Sprintf("processing username: %q", username))
+
 				peer, err := w.Client.ContactsResolveUsername(w.Context, username)
 				if err != nil {
 					log.Error(fmt.Sprintf("unable to resolve peer for username %q: %s", username, err))
 					continue
 				}
+
 				switch chat := peer.Chats[0].(type) {
 				case *tg.Channel:
 					var ip tg.InputPeerChannel = tg.InputPeerChannel{
