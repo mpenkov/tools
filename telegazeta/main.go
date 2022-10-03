@@ -35,6 +35,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -427,50 +428,53 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 // Handle the request while being mindful of FLOOD_WAIT errors.
 // If we encounter one of these, then attempt to retry intelligently after sleeping.
 //
-func (w Worker) handleRequest(request WorkerRequest) error {
+func (w Worker) handleRequest(request WorkerRequest, attempts int) error {
 	var err error
+
+	if attempts == 0 {
+		attempts = NUM_ATTEMPTS
+	}
+
+	//
+	// It's a bit difficult to get a handle on the real error because we can't
+	// reproduce it reliably, so we just use a regex to fish out the details.
+	//
+	expr := regexp.MustCompile(`rpc error code 420: FLOOD_WAIT \((\d+)\)`)
 
 	w.RequestCounter++
 
-	for attempt := 0; attempt < NUM_ATTEMPTS; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		err = request()
 		if err == nil {
 			return nil
 		}
 
-		w.Log.Info(fmt.Sprintf("handleRequest err: %s (%T)", err, err))
-		if err, ok := err.(tgError); ok {
-			code := err.GetCode()
-			text := err.GetText()
-			w.Log.Info(fmt.Sprintf("handleRequest code: %d text: %q", code, text))
-			if code == FLOOD_WAIT {
-				//
-				// The time we should sleep depends on how many requests we've made
-				// since the last FLOOD_WAIT, as long as the error text, e.g.
-				// FLOOD_WAIT_5
-				//
-				// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
-				//
-				w.Log.Info(fmt.Sprintf("handling %s", text))
-				lastIndex := strings.LastIndex(err.GetText(), "_")
-				fwSeconds := 0
-				if lastIndex != -1 {
-					if s, err := strconv.Atoi(text[lastIndex+1:]); err == nil {
-						fwSeconds = s
-					}
-				}
+		w.Log.Info(fmt.Sprintf("handleRequest err: %q (%T)", err, err))
+		submatches := expr.FindStringSubmatch(err.Error())
 
-				var sleepSeconds time.Duration = time.Duration(w.RequestCounter) + time.Duration(fwSeconds)
-				w.Log.Info(fmt.Sprintf("sleeping for %ds", sleepSeconds))
-				time.Sleep(sleepSeconds * time.Second)
-				w.RequestCounter = 0
-				continue
+		if len(submatches) == 2 {
+			//
+			// The time we should sleep depends on how many requests we've made
+			// since the last FLOOD_WAIT, as long as the error text, e.g.
+			// FLOOD_WAIT_5
+			//
+			// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
+			//
+			var sleepSeconds int = w.RequestCounter
+			if s, err := strconv.Atoi(submatches[1]); err == nil {
+				sleepSeconds += s
 			}
+			sleepDuration := time.Duration(sleepSeconds) * time.Second
+			w.Log.Info(fmt.Sprintf("sleeping for %s before retrying", sleepDuration))
+			time.Sleep(sleepDuration)
+			w.RequestCounter = 0
+			continue
 		}
 
 		//
 		// Not a FLOOD_WAIT error, so give up immediately.
 		//
+		w.Log.Info(fmt.Sprintf("unrecoverable error: %q (%T)", err, err))
 		return err
 	}
 
@@ -486,7 +490,7 @@ func (w Worker) getChannelInfo(input tg.InputChannelClass) (string, string, erro
 		return err
 	}
 
-	err := w.handleRequest(request)
+	err := w.handleRequest(request, NUM_ATTEMPTS)
 	if err != nil {
 		return "", "", fmt.Errorf("ChannelsGetFullChannel failed: %w", err)
 	}
@@ -696,7 +700,7 @@ func (w Worker) processPeer(ip tg.InputPeerClass) ([]Item, error) {
 			history, err = w.Client.MessagesGetHistory(w.Context, &getHistoryRequest)
 			return err
 		}
-		err := w.handleRequest(request)
+		err := w.handleRequest(request, NUM_ATTEMPTS)
 		if err != nil {
 			return []Item{}, fmt.Errorf("MessagesGetHistory failed: %w", err)
 		}

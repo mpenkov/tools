@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	_ "log"
 	"os"
@@ -83,12 +84,12 @@ func TestHandleRequest(t *testing.T) {
 		flag = true
 		return nil
 	}
-	err := worker.handleRequest(request)
+	err := worker.handleRequest(request, NUM_ATTEMPTS)
 	if err != nil {
 		t.Errorf("expected error to be nil, got: %s", err)
 	}
 	if flag != true {
-		t.Errorf("expected flag to be true, got: %t", flag)
+		t.Error("expected flag to be true")
 	}
 
 	//
@@ -100,12 +101,49 @@ func TestHandleRequest(t *testing.T) {
 		counter++
 		return fmt.Errorf("attempt %d failed", counter)
 	}
-	err = worker.handleRequest(request)
+	err = worker.handleRequest(request, NUM_ATTEMPTS)
 	want := "attempt 1 failed"
 	if err.Error() != want {
 		t.Errorf("want %q got %q", want, err.Error())
 	}
 	if flag != false {
-		t.Errorf("expected flag to be false, got: %t", flag)
+		t.Errorf("expected flag to be false")
+	}
+
+	//
+	// Recoverable error
+	//
+	counter = 0
+	flag = false
+	request = func() error {
+		counter++
+		if counter == 2 {
+			flag = true
+			return nil
+		}
+		return errors.New("rpcDoRequest: rpc error code 420: FLOOD_WAIT (16)")
+	}
+	err = worker.handleRequest(request, NUM_ATTEMPTS)
+	if err != nil {
+		t.Errorf("want nil got %q", err.Error())
+	}
+	if flag != true {
+		t.Errorf("expected flag to be true")
+	}
+	if counter != 2 {
+		t.Errorf("expected counter to be 2, got %d", counter)
+	}
+
+	//
+	// Recoverable error, but too many retries
+	//
+	counter = 0
+	request = func() error {
+		counter++
+		return errors.New("rpcDoRequest: rpc error code 420: FLOOD_WAIT (1)")
+	}
+	err = worker.handleRequest(request, NUM_ATTEMPTS)
+	if err == nil {
+		t.Errorf("unexpectedly nil")
 	}
 }
