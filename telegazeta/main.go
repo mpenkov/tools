@@ -349,17 +349,6 @@ func (a termAuth) Code(_ context.Context, _ *tg.AuthSentCode) (string, error) {
 	return strings.TrimSpace(code), nil
 }
 
-func decodeChannel(inputPeerClass tg.InputPeerClass) (channel tg.InputChannel, err error) {
-	switch inputPeerChannel := inputPeerClass.(type) {
-	case *tg.InputPeerChannel:
-		channel.ChannelID = inputPeerChannel.ChannelID
-		channel.AccessHash = inputPeerChannel.AccessHash
-	default:
-		err = fmt.Errorf("decodeChannel failed")
-	}
-	return channel, nil
-}
-
 type Worker struct {
 	Context         context.Context
 	Log             *zap.Logger
@@ -372,11 +361,6 @@ type Worker struct {
 }
 
 type WorkerRequest func() error
-
-type tgError interface {
-	GetCode() int
-	GetText() string
-}
 
 func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
 	var innerMessages []tg.MessageClass
