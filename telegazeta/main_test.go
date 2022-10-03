@@ -8,6 +8,8 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
+
+	"go.uber.org/zap"
 )
 
 func loadMessage(path string) (message tg.Message, err error) {
@@ -65,5 +67,45 @@ func TestRealDedup(t *testing.T) {
 		if len(uniq) != tc.want {
 			t.Errorf("dedup(%d) failed want: %d got: %d", idx, tc.want, len(uniq))
 		}
+	}
+}
+
+func TestHandleRequest(t *testing.T) {
+	logger := zap.NewExample()
+	defer logger.Sync()
+	worker := Worker{Log: logger}
+
+	//
+	// Happy case, everything works
+	//
+	flag := false
+	request := func() error {
+		flag = true
+		return nil
+	}
+	err := worker.handleRequest(request)
+	if err != nil {
+		t.Errorf("expected error to be nil, got: %s", err)
+	}
+	if flag != true {
+		t.Errorf("expected flag to be true, got: %t", flag)
+	}
+
+	//
+	// Sad case, non-recoverable error
+	//
+	counter := 0
+	flag = false
+	request = func() error {
+		counter++
+		return fmt.Errorf("attempt %d failed", counter)
+	}
+	err = worker.handleRequest(request)
+	want := "attempt 1 failed"
+	if err.Error() != want {
+		t.Errorf("want %q got %q", want, err.Error())
+	}
+	if flag != false {
+		t.Errorf("expected flag to be false, got: %t", flag)
 	}
 }

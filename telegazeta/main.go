@@ -370,6 +370,13 @@ type Worker struct {
 	RequestCounter  int
 }
 
+type WorkerRequest func() error
+
+type tgError interface {
+	GetCode() int
+	GetText() string
+}
+
 func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Message, err error) {
 	var innerMessages []tg.MessageClass
 
@@ -416,13 +423,6 @@ func (w Worker) decodeMessages(mmc tg.MessagesMessagesClass) (messages []tg.Mess
 	return messages, err
 }
 
-type WorkerRequest func() error
-
-type tgError interface {
-	GetCode() int
-	GetText() string
-}
-
 //
 // Handle the request while being mindful of FLOOD_WAIT errors.
 // If we encounter one of these, then attempt to retry intelligently after sleeping.
@@ -438,7 +438,7 @@ func (w Worker) handleRequest(request WorkerRequest) error {
 			return nil
 		}
 
-		w.Log.Info(fmt.Sprintf("handleRequest err: %s", err))
+		w.Log.Info(fmt.Sprintf("handleRequest err: %s (%T)", err, err))
 		if err, ok := err.(tgError); ok {
 			code := err.GetCode()
 			text := err.GetText()
