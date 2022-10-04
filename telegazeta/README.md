@@ -5,7 +5,7 @@ You give it a list of channels in a text file, and it gathers messages from thos
 It's written in Golang, so you need that to first build the binaries:
 
     $ go mod tidy
-    $ go build
+    $ go build -o telegazeta cmd/telegazeta/main.go
 
 For authentication and authorization, you need two tokens from my.telegram.org, the API ID and hash.
 These tokens are specific to your personal Telegram account, so keep them secret.

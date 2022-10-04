@@ -1,4 +1,4 @@
-package main
+package telegazeta
 
 import (
 	"fmt"
@@ -199,7 +199,8 @@ var mapping = template.FuncMap{
 	"markup":     markup,
 	"formatTime": formatTime,
 }
-var lenta = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
+
+var Template = template.Must(template.New("lenta").Funcs(mapping).Parse(templ))
 
 func markup(message string) template.HTML {
 	paragraphs := strings.Split(message, "\n")

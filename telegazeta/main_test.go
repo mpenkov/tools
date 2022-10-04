@@ -1,10 +1,11 @@
-package main
+package telegazeta
 
 import (
 	"errors"
 	"fmt"
 	_ "log"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/gotd/td/bin"
@@ -38,8 +39,8 @@ func TestDedup(t *testing.T) {
 	item3 := Item{Text: "foo"}
 	item4 := Item{Text: ""}
 	item5 := Item{Text: ""}
-	items := []Item{item1, item2, item3, item4, item5}
-	uniq := dedup(items)
+	items := ItemList{item1, item2, item3, item4, item5}
+	uniq := items.dedup()
 	if len(uniq) != 4 {
 		t.Errorf("deduplication failed want: 4 got: %d", len(uniq))
 	}
@@ -54,17 +55,17 @@ func TestRealDedup(t *testing.T) {
 		{[]string{"8433", "16371"}, 1},
 	}
 	for idx, tc := range testCases {
-		var items []Item
+		var items ItemList
 		for _, id := range tc.messageID {
 			filename := fmt.Sprintf("testdata/%s.bin", id)
 			m, err := loadMessage(filename)
 			if err != nil {
 				t.Fatalf("unable to load %q: %s", filename, err)
 			}
-			item := mkitem(&m)
+			item := newItem(&m)
 			items = append(items, item)
 		}
-		uniq := dedup(items)
+		uniq := items.dedup()
 		if len(uniq) != tc.want {
 			t.Errorf("dedup(%d) failed want: %d got: %d", idx, tc.want, len(uniq))
 		}
@@ -145,5 +146,37 @@ func TestHandleRequest(t *testing.T) {
 	err = worker.handleRequest(request, NUM_ATTEMPTS)
 	if err == nil {
 		t.Errorf("unexpectedly nil")
+	}
+}
+
+func TestSort(t *testing.T) {
+	var ids = []string{"16371", "64905", "8433", "8668"}
+	var items ItemList
+
+	for _, id := range ids {
+		m, _ := loadMessage(id)
+		items = append(items, newItem(&m))
+	}
+
+	sort.Sort(items)
+	if !sort.IsSorted(items) {
+		t.Errorf("expected items to be sorted")
+	}
+
+	for i, item := range items {
+		if i == 0 {
+			continue	
+		}
+		if item.Date.Unix() < items[i-1].Date.Unix() {
+			t.Fatalf("expected items to be sorted")
+		}
+	}
+
+	itemsByDate := func(i, j int) bool {
+		return items[i].Date.Unix() < items[j].Date.Unix()
+	}
+	sort.Slice(items, itemsByDate)
+	if !sort.IsSorted(items) {
+		t.Errorf("expected items to be sorted")
 	}
 }
