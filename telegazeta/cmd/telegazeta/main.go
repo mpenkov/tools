@@ -11,7 +11,7 @@
 // - [x] extract video thumbnails
 // - [x] Properly show video in the HTML: aspect ratio, display duration, etc.
 // - [x] Embed images into the HTML so that it is fully self-contained
-// - [.] Configuration file (contain phone number, secrets, channel names, etc) - avoid signing up to public channels
+// - [x] Configuration file (contain phone number, secrets, channel names, etc) - avoid signing up to public channels
 // - [ ] Show channel thumbnails
 // - [x] Markup for hyperlinks, etc. using entities from the Message
 // - [x] Parametrize threshold for old news
@@ -28,9 +28,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -41,6 +43,7 @@ import (
 
 	"github.com/gotd/td/examples"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
 
@@ -49,10 +52,19 @@ import (
 
 type Credentials struct {
 	PhoneNumber string
-	APIID       string
+	APIID       int
 	APIHash     string
 }
 
+func readCredentials(path string) (creds Credentials, err error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return creds, err
+	}
+
+	err = json.Unmarshal(data, &creds)
+	return creds, err
+}
 
 // noSignUp can be embedded to prevent signing up.
 type noSignUp struct{}
@@ -94,13 +106,43 @@ func (a termAuth) Code(_ context.Context, _ *tg.AuthSentCode) (string, error) {
 	return strings.TrimSpace(code), nil
 }
 
+//
+// https://github.com/gotd/td/blob/main/examples/bot-auth-manual/main.go
+//
+type diskSession struct{}
+
+func (ds *diskSession) LoadSession(ctx context.Context) ([]byte, error) {
+	data, err := ioutil.ReadFile("telegazeta.session")
+	if err != nil {
+		return nil, session.ErrNotFound
+	}
+	return data, nil
+}
+
+func (ds *diskSession) StoreSession(ctx context.Context, session []byte) error {
+	fout, err := os.OpenFile("telegazeta.session", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o660)
+	if err != nil {
+		return err
+	}
+	defer fout.Close()
+
+	_, err = fout.Write(session)
+	return err
+}
+
 func main() {
-	phone := flag.String("phone", "", "phone number to authenticate")
+	credsPath := flag.String("credentials", "", "the path to the credentials.json file")
 	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
+	sessionPath := flag.String("session", "telegazeta.session", "where to save the session to")
 	durationHours := flag.Int("hours", 24, "max age of messages to include, in hours")
 	tmpPath := flag.String("tempdir", "/tmp", "where to cache image files")
 	dumpPath := flag.String("dumpdir", "", "where to dump messages")
 	flag.Parse()
+
+	creds, err := readCredentials(*credsPath)
+	if err != nil {
+		log.Fatalf("unable to read credentials from %q: %s", *credsPath, err)
+	}
 
 	var channels []string
 	if *channelsPath != "" {
@@ -126,16 +168,16 @@ func main() {
 	examples.Run(func(ctx context.Context, log *zap.Logger) error {
 		// Setting up authentication flow helper based on terminal auth.
 		flow := auth.NewFlow(
-			termAuth{phone: *phone},
+			termAuth{phone: creds.PhoneNumber},
 			auth.SendCodeOptions{},
 		)
 
-		client, err := telegram.ClientFromEnvironment(telegram.Options{
+		sessionStorage := &diskSession{}
+		options := telegram.Options{
 			Logger: log,
-		})
-		if err != nil {
-			return err
+			SessionStorage: sessionStorage,
 		}
+		client := telegram.NewClient(creds.APIID, creds.APIHash, options)
 		return client.Run(ctx, func(ctx context.Context) error {
 			if err := client.Auth().IfNecessary(ctx, flow); err != nil {
 				return err
