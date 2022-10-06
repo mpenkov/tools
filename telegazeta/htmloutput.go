@@ -42,9 +42,15 @@ const templ = `
 			}
 			.image-thumbnail { border-radius: 5%; }
 
+			img {
+				width: 320px;
+				height: 180px;
+				object-fit: contain;
+				background-color: darkgrey;
+			}
+
 			/* https://stackoverflow.com/questions/44275502/overlay-text-on-image-html#44275595 */
 			.container { position: relative; }
-			.container img { width: 100%; }
 			.container p {
 				position: absolute;
 				bottom: 0;
