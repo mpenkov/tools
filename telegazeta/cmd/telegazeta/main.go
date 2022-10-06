@@ -106,30 +106,6 @@ func (a termAuth) Code(_ context.Context, _ *tg.AuthSentCode) (string, error) {
 	return strings.TrimSpace(code), nil
 }
 
-//
-// https://github.com/gotd/td/blob/main/examples/bot-auth-manual/main.go
-//
-type diskSession struct{}
-
-func (ds *diskSession) LoadSession(ctx context.Context) ([]byte, error) {
-	data, err := ioutil.ReadFile("telegazeta.session")
-	if err != nil {
-		return nil, session.ErrNotFound
-	}
-	return data, nil
-}
-
-func (ds *diskSession) StoreSession(ctx context.Context, session []byte) error {
-	fout, err := os.OpenFile("telegazeta.session", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o660)
-	if err != nil {
-		return err
-	}
-	defer fout.Close()
-
-	_, err = fout.Write(session)
-	return err
-}
-
 func main() {
 	credsPath := flag.String("credentials", "", "the path to the credentials.json file")
 	channelsPath := flag.String("channels", "", "list of public channels to read, one per line")
@@ -172,10 +148,11 @@ func main() {
 			auth.SendCodeOptions{},
 		)
 
-		sessionStorage := &diskSession{}
 		options := telegram.Options{
 			Logger: log,
-			SessionStorage: sessionStorage,
+			SessionStorage: &session.FileStorage{
+				Path: *sessionPath,
+			},
 		}
 		client := telegram.NewClient(creds.APIID, creds.APIHash, options)
 		return client.Run(ctx, func(ctx context.Context) error {
