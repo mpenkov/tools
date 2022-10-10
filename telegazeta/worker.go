@@ -469,14 +469,7 @@ func (w Worker) Collect(channels []string) ItemList {
 	// Sort before deduplication to favor original (non-forwarded)
 	// messages
 	//
-	// FIXME: why is the sort function not working???  The items are appearing
-	// out of order...
-	//
 	sort.Sort(items)
-	// itemsByDate := func(i, j int) bool {
-	//	return items[i].Date.Unix() < items[j].Date.Unix()
-	//}
-	// sort.Slice(items, itemsByDate)
 	before := len(items)
 	items = items.dedup()
 	w.Log.Info(fmt.Sprintf("removed %d items as duplicates", before-len(items)))
