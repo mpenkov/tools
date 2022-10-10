@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,11 +13,6 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
-)
-
-const (
-	FLOOD_WAIT   int = 420
-	NUM_ATTEMPTS int = 5
 )
 
 //
@@ -55,78 +48,13 @@ type Worker struct {
 	DurationSeconds int64
 
 	channelCache    map[int64]Channel
-	requestCounter  int
-}
-
-type WorkerRequest func() error
-
-//
-// Handle the request while being mindful of FLOOD_WAIT errors.
-// If we encounter one of these, then attempt to retry intelligently after sleeping.
-//
-func (w Worker) handleRequest(request WorkerRequest, attempts int) error {
-	var err error
-
-	if attempts == 0 {
-		attempts = NUM_ATTEMPTS
-	}
-
-	//
-	// It's a bit difficult to get a handle on the real error because we can't
-	// reproduce it reliably, so we just use a regex to fish out the details.
-	//
-	expr := regexp.MustCompile(`rpc error code 420: FLOOD_WAIT \((\d+)\)`)
-
-	w.requestCounter++
-
-	for attempt := 0; attempt < attempts; attempt++ {
-		err = request()
-		if err == nil {
-			return nil
-		}
-
-		w.Log.Info(fmt.Sprintf("handleRequest err: %q (%T)", err, err))
-		submatches := expr.FindStringSubmatch(err.Error())
-
-		if len(submatches) == 2 {
-			//
-			// The time we should sleep depends on how many requests we've made
-			// since the last FLOOD_WAIT, as long as the error text, e.g.
-			// FLOOD_WAIT_5
-			//
-			// https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html
-			//
-			var sleepSeconds int = w.requestCounter
-			if s, err := strconv.Atoi(submatches[1]); err == nil {
-				sleepSeconds += s
-			}
-			sleepDuration := time.Duration(sleepSeconds) * time.Second
-			w.Log.Info(fmt.Sprintf("sleeping for %s before retrying", sleepDuration))
-			time.Sleep(sleepDuration)
-			w.requestCounter = 0
-			continue
-		}
-
-		//
-		// Not a FLOOD_WAIT error, so give up immediately.
-		//
-		w.Log.Info(fmt.Sprintf("unrecoverable error: %q (%T)", err, err))
-		return err
-	}
-
-	return fmt.Errorf("gave up after %d attempts, last error: %w", NUM_ATTEMPTS, err)
 }
 
 func (w Worker) getChannelInfo(input tg.InputChannelClass) (Channel, error) {
 	var result *tg.MessagesChatFull
+	var err error
 
-	request := func() error {
-		var err error
-		result, err = w.Client.ChannelsGetFullChannel(w.Context, input)
-		return err
-	}
-
-	err := w.handleRequest(request, NUM_ATTEMPTS)
+	result, err = w.Client.ChannelsGetFullChannel(w.Context, input)
 	if err != nil {
 		return Channel{}, fmt.Errorf("ChannelsGetFullChannel failed: %w", err)
 	}
@@ -161,7 +89,6 @@ func (w Worker) downloadThumbnail(location tg.InputFileLocationClass) (string, e
 		return path, nil
 	} else {
 		w.Log.Info(fmt.Sprintf("downloading thumbnail for id %d", id))
-		w.requestCounter++
 		dloader := downloader.NewDownloader()
 		builder := dloader.Download(w.Client, location)
 		_, err := builder.ToPath(w.Context, path)
@@ -308,13 +235,9 @@ func (w Worker) paginateMessages(ip tg.InputPeerClass) ([]tg.Message, error) {
 	messages := []tg.Message{}
 	for {
 		var history tg.MessagesMessagesClass
-		request := func() error {
-			var err error
-			getHistoryRequest := tg.MessagesGetHistoryRequest{Peer: ip, AddOffset: offset}
-			history, err = w.Client.MessagesGetHistory(w.Context, &getHistoryRequest)
-			return err
-		}
-		err := w.handleRequest(request, NUM_ATTEMPTS)
+		var err error
+		getHistoryRequest := tg.MessagesGetHistoryRequest{Peer: ip, AddOffset: offset}
+		history, err = w.Client.MessagesGetHistory(w.Context, &getHistoryRequest)
 		if err != nil {
 			return messages, err
 		}

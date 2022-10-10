@@ -41,6 +41,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh/terminal"
 
+	"github.com/gotd/contrib/middleware/floodwait"
+
 	"github.com/gotd/td/examples"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/session"
@@ -152,6 +154,9 @@ func main() {
 			Logger: log,
 			SessionStorage: &session.FileStorage{
 				Path: *sessionPath,
+			},
+			Middlewares: []telegram.Middleware{
+				floodwait.NewSimpleWaiter().WithMaxRetries(10),
 			},
 		}
 		client := telegram.NewClient(creds.APIID, creds.APIHash, options)
