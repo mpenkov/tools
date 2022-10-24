@@ -82,6 +82,7 @@ func Cat(rawUrl string) error {
 	case "s3":
 		return s3_cat(rawUrl)
 	case "http":
+		fallthrough
 	case "https":
 		return http_cat(rawUrl)
 	}
