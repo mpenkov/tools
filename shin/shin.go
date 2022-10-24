@@ -40,7 +40,11 @@ func findInstance(instanceId string) (ec2types.Instance, error) {
 		params := ec2.DescribeInstancesInput{InstanceIds: []string{instanceId}}
 		output, err := client.DescribeInstances(ctx, &params)
 		if err == nil {
-			return output.Reservations[0].Instances[0], nil
+			if len(output.Reservations) == 1 && len(output.Reservations[0].Instances) == 1 {
+				return output.Reservations[0].Instances[0], nil
+			}
+			err = fmt.Errorf("no info for instance %q, it may have been purged", instanceId)
+			return ec2types.Instance{}, err
 		}
 		return ec2types.Instance{}, err
 	}
@@ -50,7 +54,11 @@ func findInstance(instanceId string) (ec2types.Instance, error) {
 	params := ec2.DescribeInstancesInput{Filters: []ec2types.Filter{filter}}
 	output, err := client.DescribeInstances(ctx, &params)
 	if err == nil {
-		return output.Reservations[0].Instances[0], nil
+		if len(output.Reservations) == 1 && len(output.Reservations[0].Instances) == 1 {
+			return output.Reservations[0].Instances[0], nil
+		}
+		err = fmt.Errorf("no info for instance named %q, it may have been purged", instanceId)
+		return ec2types.Instance{}, err
 	}
 
 	return ec2types.Instance{}, err
@@ -142,6 +150,8 @@ func main() {
 	instance, err := findInstance(flag.Arg(0))
 	if err != nil {
 		log.Fatal(err)
+	} else if *instance.PublicIpAddress == "" {
+		log.Fatalf("instance %q does not have a public IP", flag.Arg(0))
 	}
 
 	if registerHost {
