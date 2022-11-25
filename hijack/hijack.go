@@ -32,22 +32,25 @@ func tweakUrl(url string) string {
 	if strings.Contains(url, "api.github.com") {
 		return url
 	}
-	url = strings.Replace(url, "github.com", "api.github.com", 1)
+	url = strings.Replace(url, "github.com/", "api.github.com/repos/", 1)
 	url = strings.Replace(url, "/pull/", "/pulls/", 1)
 	return url
 }
 
 func get(url string) PullRequest {
+	// log.Printf("get(%q)", url)
 	response, err := http.Get(url)
-	defer response.Body.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer response.Body.Close()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// fmt.Println(string(body))
 	
 	var pr PullRequest
 	err = json.Unmarshal(body, &pr)
@@ -74,8 +77,9 @@ func run(executable string, args ...string) string {
 }
 
 func main() {
-	if len(os.Args) == 0 {
-		log.Fatalf("usage: hijack http://github.com/repos/ORG/REPO/pulls/123")
+	if len(os.Args) == 1 {
+		fmt.Printf("usage: hijack http://github.com/repos/ORG/REPO/pulls/123\n")
+		os.Exit(1)
 	}
 
 	currentBranch := run("git", "branch", "--show-current")
@@ -129,7 +133,7 @@ func main() {
 	//
 	run("git", "branch", "--set-upstream-to", upstream)
 
-	fmt.Printf("Hijack of %s (%s/%s) progress.\n", url, user, ref)
+	fmt.Printf("Hijack of %q (%s/%s) in progress.\n", url, user, ref)
 	fmt.Println("`git commit` your changes and then run `hijack land`")
 	fmt.Println("to remove all traces of this tool, run `hijack cleanup`")
 }
