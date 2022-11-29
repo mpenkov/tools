@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"text/template"
 	"time"
@@ -52,16 +51,8 @@ func main() {
 
 	now := time.Now()
 	var weekday int = int(now.Weekday())
-
-	var startOfWeek time.Time
-	var offset time.Duration
-	if weekday == 1 {
-		d, _ := time.ParseDuration("168h")
-		offset = -d
-	} else {
-		log.Fatalf("todo: implement me!")
-	}
-	startOfWeek = now.Add(offset)
+	var daysBefore int = 7 + weekday - 1
+	var startOfWeek time.Time = now.Add(-time.Duration(daysBefore) * 24 * time.Hour)
 
 	year, month, date := startOfWeek.Date()
 	endOfYear, _ := time.Parse("2006-01-02", fmt.Sprintf("%d-12-31", year))
