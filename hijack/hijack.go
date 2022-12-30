@@ -71,6 +71,9 @@ func run(executable string, args ...string) string {
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
+		//
+		// TODO: print command output to standard error
+		//
 		log.Fatalf("the command `%s %s` failed: %s", executable, args, err)
 	}
 	return strings.TrimRight(out.String(), "\n")

@@ -1,23 +1,7 @@
 package main
 
-//
-// kp works with the copy-paste buffer
-//
-// read stuff into the buffer (copy):
-//
-//		cat file.txt | grep foo | kp copy -
-//		kp copy file.txt
-//
-// edit the contents of the buffer (using $EDITOR):
-//
-//		kp edit
-//
-// write the contents of the buffer to stdout (like a paste):
-//
-//		kp paste
-//
-
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -52,8 +36,11 @@ func read(path string) string {
 }
 
 func copy(path string) {
-	data := read(path)
+	var data string = read(path)
 	clipboard.WriteAll(data)
+	if *echo {
+		fmt.Println(data)
+	}
 }
 
 func paste(path string) {
@@ -85,31 +72,38 @@ func printUsage() {
 	os.Exit(1)
 }
 
+var (
+	echo = flag.Bool("echo", false, "echo the contents of the clipboard to stdout")
+)
+
 func main() {
+	flag.Parse()
+
 	var (
-		nargs int = len(os.Args)
+		args []string = flag.Args()
+		nargs int = len(args)
 	)
 
-	if nargs == 1 {
+	if nargs == 0 {
 		copy("-")
 		return
 	}
 
-	command := os.Args[1]
+	command := args[0]
 
 	if command == "copy" {
-		if nargs <= 2 {
+		if nargs <= 1 {
 			copy("-")
 		} else if nargs == 3 {
-			copy(os.Args[2])
+			copy(args[1])
 		} else {
 			printUsage()
 		}
 	} else if command == "paste" {
-		if nargs == 2 {
+		if nargs == 1 {
 			paste("-")
-		} else if nargs == 3 {
-			paste(os.Args[2])
+		} else if nargs == 2 {
+			paste(args[1])
 		} else {
 			printUsage()
 		}
