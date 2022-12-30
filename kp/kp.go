@@ -112,6 +112,8 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		defer os.RemoveAll(tempDir)
+
 		path := fmt.Sprintf("%s/clipboard.txt", tempDir)
 		paste(path)
 
