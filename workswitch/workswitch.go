@@ -181,6 +181,9 @@ func getCurrentWorkspace() int {
 func main() {
 	flag.Parse()
 
+	configDir := os.ExpandEnv("$HOME/.config/workswitch")
+	os.MkdirAll(configDir, 0o770)
+
 	if *workspace != -1 {
 		//
 		// Save the mouse location for the current workspace before switching

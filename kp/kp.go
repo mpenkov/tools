@@ -15,7 +15,7 @@ func read(path string) string {
 		data []byte
 		err error
 	)
-	
+
 	if path == "-" {
 		data, err = io.ReadAll(os.Stdin)
 		if err != nil {
@@ -39,7 +39,7 @@ func copy(path string) {
 	var data string = read(path)
 	clipboard.WriteAll(data)
 	if *echo {
-		fmt.Println(data)
+		fmt.Printf(data)
 	}
 }
 
@@ -73,7 +73,7 @@ func printUsage() {
 }
 
 var (
-	echo = flag.Bool("echo", false, "echo the contents of the clipboard to stdout")
+	echo = flag.Bool("e", false, "echo the contents of the clipboard to stdout when copying")
 )
 
 func main() {
