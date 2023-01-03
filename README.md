@@ -3,6 +3,12 @@
 This repository contains a bunch of stuff that I find useful.
 Some of it may be reusable, but most of it is probably useful only to myself.
 
+## ghreview
+
+Provides a summary of my github activity across several github repositories during a particular year.
+
+    $ ./ghreview 2022 RaRe-Technologies/gensim RaRe-Technologies/smart_open | tee ~/Dropbox/wiki/2022/so.html
+
 ## hijack
 
 Hijack a github PR in order to be able to push commits to it.
