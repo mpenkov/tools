@@ -146,11 +146,24 @@ func getTouchpadOff() string {
 
 func setTouchpadOff(value string) string {
 	fmt.Printf("setTouchpadOff(%q)\n", value)
-	if value == "toggle" {
+	if value == "toggle01" {
 		oldValue := getTouchpadOff()
-		if oldValue == "0" {
+		switch oldValue {
+		case "0":
 			value = "1"
-		} else {
+		case "1":
+			value = "0"
+		case "2":
+			value = "0"
+		}
+	} else if value == "toggle02" {
+		oldValue := getTouchpadOff()
+		switch oldValue {
+		case "0":
+			value = "2"
+		case "2":
+			value = "0"
+		default:
 			value = "0"
 		}
 	}
