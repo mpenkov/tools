@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -17,54 +18,31 @@ import (
 	"strings"
 )
 
-var workspace = flag.Int("workspace", -1, "Switch to a workspace number")
-var ibusEngine = flag.String("ibusengine", "", "Change the IBus engine for the current workspace")
-var touchpadOff = flag.String("touchpadoff", "", "Change the TouchpadOff flag for the current workspace")
+var (
+	workspace = flag.Int("workspace", -1, "Switch to a workspace number")
+	touchpadOff = flag.String("touchpadoff", "", "Change the TouchpadOff flag for the current workspace")
+	inputLanguage = flag.String("inputlanguage", "", "Set the input language for the currnet workspace")
+	keyboardIndicator = flag.Bool("keyboardindicator", false, "Print the keyboard indicator to stdout")
+	touchpadIndicator = flag.Bool("touchpadindicator", false, "Print the touchpad indicator to stdout")
+)
 
-type state struct {
-	IbusEngine     string
+type State struct {
+	InputLanguage  string
 	TouchpadOff    string
 	MouseLocationX int
 	MouseLocationY int
+
+	Workspace int
 }
 
-var defaultState = state{IbusEngine: "xkb:jp::jpn", TouchpadOff: "0"}
-
-func findJson(workspace int) string {
-	return os.ExpandEnv(fmt.Sprintf("$HOME/.config/workswitch/%d.json", workspace))
-}
-
-func load(workspace int) (state, error) {
-	path := findJson(workspace)
-	f, err := os.Open(path)
-	if err != nil {
-		return state{}, err
-	}
-	defer f.Close()
-
-	data := make([]byte, 1024768)
-	numRead, err := f.Read(data)
-	if err != nil || numRead == len(data) {
-		return state{}, err
-	}
-
-	var state state
-	err = json.Unmarshal(data[:numRead], &state)
-	if err != nil {
-		return state, fmt.Errorf("json decoding of %q failed: %w", path, err)
-	}
-
-	return state, nil
-}
-
-func save(workspace int, state state) error {
-	path := findJson(workspace)
+func (s State) Save() error {
+	path := findJson(s.Workspace)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
 
-	data, err := json.Marshal(state)
+	data, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}
@@ -77,11 +55,75 @@ func save(workspace int, state state) error {
 	return nil
 }
 
+func (s State) Activate() {
+	setInputLanguage(s.InputLanguage)
+	setTouchpadOff(s.TouchpadOff)
+	setMouseLocation(s.MouseLocationX, s.MouseLocationY)
+}
+
+func findJson(workspace int) string {
+	return os.ExpandEnv(fmt.Sprintf("$HOME/.config/workswitch/%d.json", workspace))
+}
+
+func load(workspace int) (State, error) {
+	path := findJson(workspace)
+	f, err := os.Open(path)
+	if err != nil {
+		return State{}, err
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return State{}, err
+	}
+
+	var state State
+	err = json.Unmarshal(data, &state)
+	if err != nil {
+		return state, fmt.Errorf("json decoding of %q failed: %w", path, err)
+	}
+	return state, nil
+}
+
 func setIbusEngine(engine string) {
 	fmt.Printf("setIbusEngine(%q)\n", engine)
 	cmd := exec.Command("ibus", "engine", engine)
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("'ibus engine %s' failed: %s", engine, err)
+		// log.Fatalf("'ibus engine %s' failed: %s", engine, err)
+	}
+}
+
+func setInputLanguage(language string) {
+	if language == "english" {
+		setIbusEngine("xkb:jp::jpn")
+		setKeyboardLayout("jp")
+	} else if language == "russian" {
+		setIbusEngine("xkb:jp::jpn")
+		//
+		// I've found that I need to us ru,jp (instead of just ru) in order to
+		// get keyboard shortcuts (e.g. ctrl+C) to work with the Russian layout
+		// enabled.  Otherwise, I run into this problem:
+		//
+		// https://bugzilla.mozilla.org/show_bug.cgi?id=69230
+		//
+		// for all applications, not just Firefox.
+		//
+		setKeyboardLayout("ru,jp")
+	} else if language == "japanese" {
+		setIbusEngine("mozc-jp")
+		setKeyboardLayout("jp")
+	} else {
+		log.Fatalf("unsupported language: %q", language)
+	}
+}
+
+func setKeyboardLayout(layout string) {
+	fmt.Printf("setKeyboardLayout(%q)\n", layout)
+	cmd := exec.Command("setxkbmap", layout)
+	err := cmd.Run()
+	if err != nil {
+		log.Fatalf("setxkbmap failed: %s", err)
 	}
 }
 
@@ -116,6 +158,15 @@ func setTouchpadOff(value string) string {
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("synclient failed: %s", err)
 	}
+
+
+	//
+	// syndaemon gets confused when we tweak TouchpadOff ourselves, so we
+	// restart it here.
+	//
+	exec.Command("killall", "syndaemon").Run()
+	exec.Command("syndaemon", "-i", "2.0", "-d", "-t", "-K")
+
 	return value
 }
 
@@ -178,6 +229,19 @@ func getCurrentWorkspace() int {
 	return -1
 }
 
+func loadCurrentState() State {
+	currentWorkspace := getCurrentWorkspace()
+	state, err := load(currentWorkspace)
+	if err != nil {
+		log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
+		state = State{
+			Workspace: currentWorkspace,
+			InputLanguage: "english",
+		}
+	}
+	return state
+}
+
 func main() {
 	flag.Parse()
 
@@ -189,55 +253,77 @@ func main() {
 		// Save the mouse location for the current workspace before switching
 		// to the new workspace and loading its settings.
 		//
-		currentWorkspace := getCurrentWorkspace()
-		state, err := load(currentWorkspace)
-		if err != nil {
-			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
-			state = defaultState
-		}
+		state := loadCurrentState()
+
 		x, y := getMouseLocation()
 		state.MouseLocationX = x
 		state.MouseLocationY = y
-		save(currentWorkspace, state)
+		state.Save()
 
 		cmd := exec.Command("i3-msg", "-t", "command", fmt.Sprintf("workspace number %d", *workspace))
 		if err := cmd.Run(); err != nil {
 			log.Fatal(err)
 		}
 
-		state, err = load(*workspace)
+		state, err := load(*workspace)
 		if err != nil {
 			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
-			state = defaultState
+			state = State{
+				Workspace: *workspace,
+				InputLanguage: "english",
+			}
 		}
-		setIbusEngine(state.IbusEngine)
-		setTouchpadOff(state.TouchpadOff)
-		setMouseLocation(state.MouseLocationX, state.MouseLocationY)
+
+		state.Activate()
 	}
 
-	if *ibusEngine != "" {
-		setIbusEngine(*ibusEngine)
-
-		currentWorkspace := getCurrentWorkspace()
-		state, err := load(currentWorkspace)
-		if err != nil {
-			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
-			state = defaultState
-		}
-		state.IbusEngine = *ibusEngine
-		save(currentWorkspace, state)
+	if *inputLanguage != "" {
+		setInputLanguage(*inputLanguage)
+		state := loadCurrentState()
+		state.InputLanguage = *inputLanguage
+		state.Save()
 	}
 
 	if *touchpadOff != "" {
 		value := setTouchpadOff(*touchpadOff)
-
-		currentWorkspace := getCurrentWorkspace()
-		state, err := load(currentWorkspace)
-		if err != nil {
-			log.Printf("could not load workspace %d: %s, using defaults", *workspace, err)
-			state = defaultState
-		}
+		state := loadCurrentState()
 		state.TouchpadOff = value
-		save(currentWorkspace, state)
+		state.Save()
+	}
+
+	if *keyboardIndicator {
+		state := loadCurrentState()
+		switch state.InputLanguage {
+		case "", "english":
+			fmt.Println("🟢 QWERTY")
+		case "russian":
+			fmt.Println("🔵 ЙЦУКЕН")
+			fmt.Println()
+			fmt.Println("#ff0000")
+		case "japanese":
+			fmt.Println(" 🔴 日 本 語")
+		default:
+			log.Fatalf("unknown language: %q", state.InputLanguage)
+		}
+	}
+
+	if *touchpadIndicator {
+		//
+		// syndaemon also changes this value, so we rely on it directly instead
+		// of looking it up in the workspace state
+		//
+		value := getTouchpadOff()
+		switch value {
+		case "0":
+			fmt.Println("🐾 ON")
+		case "1":
+			fmt.Println("🐾 OFF")
+			fmt.Println()
+			fmt.Println("#ff0000")
+		case "2":
+			fmt.Println("🐾 BLK")
+			fmt.Println()
+			fmt.Println("#ff6900")
+		}
 	}
 }
