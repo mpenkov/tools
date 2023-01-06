@@ -92,7 +92,7 @@ func register(instance ec2types.Instance, alias, username string) error {
 	fmt.Fprintf(os.Stderr, buf.String())
 
 	path := os.ExpandEnv("$HOME/.ssh/config")
-	fout, err := os.OpenFile(path, os.O_APPEND | os.O_WRONLY, 0600)
+	fout, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -129,22 +129,19 @@ func ssh(ip string, username string, writeKnownHosts bool) error {
 	return err
 }
 
-func main() {
-	var doNotConnect bool
-	var registerHost bool
-	var writeKnownHosts bool
-	var registerAlias string
-	var username string
+var (
+	doNotConnect    = flag.Bool("dnc", false, "do not actually connect to the instance")
+	registerHost    = flag.Bool("register", false, "register the instance instance in ~/.ssh/config")
+	writeKnownHosts = flag.Bool("known", false, "write the fingerprint to ~/.ssh/known_hosts during initial connection")
+	registerAlias   = flag.String("alias", "", "override the alias to register")
+	username        = flag.String("username", "ubuntu", "the username to use for the connection")
+)
 
+func main() {
 	//
 	// NB. When calling this program, the non-flag arguments MUST follow the flag arguments.
 	// If we don't do this, the command-line argument parsing will not work correctly.
 	//
-	flag.BoolVar(&doNotConnect, "dnc", false, "do not actually connect to the instance")
-	flag.BoolVar(&registerHost, "register", false, "register the instance instance in ~/.ssh/config")
-	flag.BoolVar(&writeKnownHosts, "known", false, "write the fingerprint to ~/.ssh/known_hosts during initial connection")
-	flag.StringVar(&registerAlias, "alias", "", "override the alias to register")
-	flag.StringVar(&username, "username", "ubuntu", "the username to use for the connection")
 	flag.Parse()
 
 	instance, err := findInstance(flag.Arg(0))
@@ -154,12 +151,15 @@ func main() {
 		log.Fatalf("instance %q does not have a public IP", flag.Arg(0))
 	}
 
-	if registerHost {
-		register(instance, registerAlias, username)
+	if *registerHost {
+		err := register(instance, *registerAlias, *username)
+		if err != nil {
+			log.Fatalf("failed to register host: %s", err)
+		}
 	}
 
-	if !doNotConnect {
-		err := ssh(*instance.PublicIpAddress, username, writeKnownHosts)
+	if !*doNotConnect {
+		err := ssh(*instance.PublicIpAddress, *username, *writeKnownHosts)
 		if err != nil {
 			log.Fatal(err)
 		}

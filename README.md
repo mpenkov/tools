@@ -40,6 +40,8 @@ SSH into an EC2 instance by its ID:
 
 Requires IDENTITY_FILE_PATH environment variable to be set to e.g. ~/.ssh/identity.pem
 
+Offers a helpful `-register` flag that updates `~/.ssh/config` to simplify reconnecting to the instance, using `scp`, etc.
+
 ## workswitch
 
 This application glues [i3](https://i3wm.org/) with various command-line utilities to make my work more productive.
