@@ -125,6 +125,19 @@ func setKeyboardLayout(layout string) {
 	if err != nil {
 		log.Fatalf("setxkbmap failed: %s", err)
 	}
+
+	//
+	// The above command resets xmodmap, which contains some useful overrides,
+	// so apply xmodmap again, provided ~/.Xmodmap actually exists.
+	//
+	xmodmapPath := os.ExpandEnv("$HOME/.Xmodmap")
+	_, err = os.ReadFile(xmodmapPath)
+	if err == nil {
+		err = exec.Command("xmodmap", xmodmapPath).Run()
+		if err != nil {
+			log.Fatalf("xmodmap failed: %s", err)
+		}
+	}
 }
 
 func getTouchpadOff() string {
