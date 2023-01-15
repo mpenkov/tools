@@ -38,9 +38,7 @@ func read(path string) string {
 func copy(path string) {
 	var data string = read(path)
 	clipboard.WriteAll(data)
-	if *echo {
-		fmt.Printf(data)
-	}
+	fmt.Printf(data)
 }
 
 func paste(path string) {
@@ -71,10 +69,6 @@ func printUsage() {
 	fmt.Println("usage: kp [copy|paste|edit]")
 	os.Exit(1)
 }
-
-var (
-	echo = flag.Bool("e", false, "echo the contents of the clipboard to stdout when copying")
-)
 
 func main() {
 	flag.Parse()
