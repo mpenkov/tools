@@ -24,6 +24,7 @@ var (
 	inputLanguage = flag.String("inputlanguage", "", "Set the input language for the currnet workspace")
 	keyboardIndicator = flag.Bool("keyboardindicator", false, "Print the keyboard indicator to stdout")
 	touchpadIndicator = flag.Bool("touchpadindicator", false, "Print the touchpad indicator to stdout")
+	verbose = flag.Bool("verbose", false, "Print debugging information to standard output")
 )
 
 type State struct {
@@ -87,7 +88,9 @@ func load(workspace int) (State, error) {
 }
 
 func setIbusEngine(engine string) {
-	fmt.Printf("setIbusEngine(%q)\n", engine)
+	if *verbose {
+		fmt.Printf("setIbusEngine(%q)\n", engine)
+	}
 	cmd := exec.Command("ibus", "engine", engine)
 	if err := cmd.Run(); err != nil {
 		// log.Fatalf("'ibus engine %s' failed: %s", engine, err)
@@ -119,8 +122,10 @@ func setInputLanguage(language string) {
 }
 
 func setKeyboardLayout(layout string) {
-	fmt.Printf("setKeyboardLayout(%q)\n", layout)
-	cmd := exec.Command("setxkbmap", layout)
+	if *verbose {
+		fmt.Printf("setKeyboardLayout(%q)\n", layout)
+	}
+	cmd := exec.Command("setxkbmap", "-option", "ctrl:nocaps", layout)
 	err := cmd.Run()
 	if err != nil {
 		log.Fatalf("setxkbmap failed: %s", err)
@@ -158,7 +163,9 @@ func getTouchpadOff() string {
 }
 
 func setTouchpadOff(value string) string {
-	fmt.Printf("setTouchpadOff(%q)\n", value)
+	if *verbose {
+		fmt.Printf("setTouchpadOff(%q)\n", value)
+	}
 	if value == "toggle01" {
 		oldValue := getTouchpadOff()
 		switch oldValue {
@@ -219,7 +226,9 @@ func getMouseLocation() (int, int) {
 }
 
 func setMouseLocation(xPos, yPos int) {
-	fmt.Printf("setMouseLocation(%d, %d)\n", xPos, yPos)
+	if *verbose {
+		fmt.Printf("setMouseLocation(%d, %d)\n", xPos, yPos)
+	}
 	x := fmt.Sprintf("%d", xPos)
 	y := fmt.Sprintf("%d", yPos)
 	cmd := exec.Command("xdotool", "mousemove", x, y)
