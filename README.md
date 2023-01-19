@@ -14,6 +14,15 @@ Provides a summary of my github activity across several github repositories duri
 Hijack a github PR in order to be able to push commits to it.
 Helpful for maintaining my open-source repos, e.g. [gensim](https://github.com/RaRe-Technologies/gensim) and [smart_open](https://github.com/RaRe-Technologies/smart_open).
 
+## kot
+
+Like cat, but with auto-completion for S3 and HTTP (TODO).
+To install, first run:
+
+     COMP_INSTALL=1 kot
+
+and answer "yes" to the prompt.
+
 ## kp
 
 kp works with the copy-paste buffer
