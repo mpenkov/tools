@@ -35,3 +35,5 @@ write the contents of the current [tmux](https://github.com/tmux/tmux/wiki) pane
     $ kp tmux
 
 This allows you to easily share snippets of output from your console with others.
+I find this to be much quicker than using tmux's copy-mode-vi (or copy-mode depending on the local tmux config).
+`kp tmux` instantly puts the whole pane into vim, and from there I can edit at the speed of thought.
