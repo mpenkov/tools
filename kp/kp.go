@@ -1,51 +1,55 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 
 	"github.com/atotto/clipboard"
 )
 
-func read(path string) string {
+//
+// Read the contents of path, and write them to the clipboard
+//
+func copy(path string) {
 	var (
 		data []byte
+		text string
 		err error
 	)
-
 	if path == "-" {
 		data, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			panic(err)
-		}
 	} else {
-		fout, err := os.Open(path)
-		if err != nil {
-			panic(err)
-		}
-		defer fout.Close()
-		data, err = io.ReadAll(fout)
-		if err != nil {
-			panic(err)
-		}
+		data, err = os.ReadFile(path)
 	}
-	return string(data)
+	if err != nil {
+		panic(err)
+	}
+
+	text = string(data)
+	err = clipboard.WriteAll(text)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf(text)
 }
 
-func copy(path string) {
-	var data string = read(path)
-	clipboard.WriteAll(data)
-	fmt.Printf(data)
-}
-
+//
+// Read contents from the clipboard, and save them to the path
+//
 func paste(path string) {
 	var (
 		fout *os.File
+		text string
 		err error
 	)
+	text, err = clipboard.ReadAll()
+	if err != nil {
+		panic(err)
+	}
+
 	if path == "-" {
 		fout = os.Stdout
 	} else {
@@ -55,78 +59,114 @@ func paste(path string) {
 		}
 		defer fout.Close()
 	}
-	data, err := clipboard.ReadAll()
+	_, err = fout.Write([]byte(text))
 	if err != nil {
 		panic(err)
 	}
-	_, err = fout.Write([]byte(data))
+}
+
+//
+// Edit the contents of the file using $EDITOR.
+//
+func edit(path string) {
+	editor := os.ExpandEnv("$EDITOR")
+	if editor == "$EDITOR" {
+		editor = "vim"
+	}
+
+	command := exec.Command(editor, path)
+	command.Stdin = os.Stdin
+	command.Stderr = os.Stderr
+	command.Stdout = os.Stdout
+	err := command.Run()
 	if err != nil {
 		panic(err)
 	}
 }
 
 func printUsage() {
-	fmt.Println("usage: kp [copy|paste|edit]")
+	fmt.Println(`kp works with the copy-paste buffer.
+
+Usage:
+
+	kp <command>
+
+The commands are:
+
+	copy	Read standard input, write to the copy-paste buffer
+	edit	Edit the contents of the copy-paste buffer using $EDITOR
+	paste	Write the contents of the copy-paste buffer to standard output
+	tmux	Write the contents of the current tmux pane to the copy-paste buffer
+`)
 	os.Exit(1)
 }
 
 func main() {
-	flag.Parse()
+	var args []string = os.Args
 
-	var (
-		args []string = flag.Args()
-		nargs int = len(args)
-	)
-
-	if nargs == 0 {
+	if len(args) < 2 {
 		copy("-")
 		return
 	}
 
-	command := args[0]
+	command := args[1]
+	args = args[2:]
 
-	if command == "copy" {
-		if nargs <= 1 {
-			copy("-")
-		} else if nargs == 3 {
-			copy(args[1])
-		} else {
+	switch command {
+	case "copy":
+		var path string
+		switch len(args) {
+		case 0:
+			path = "-"
+		case 1:
+			path = args[0]
+		default:
 			printUsage()
+			return
 		}
-	} else if command == "paste" {
-		if nargs == 1 {
-			paste("-")
-		} else if nargs == 2 {
-			paste(args[1])
-		} else {
+		copy(path)
+	case "paste":
+		var path string
+		switch len(args) {
+		case 0:
+			path = "-"
+		case 1:
+			path = args[0]
+		default:
 			printUsage()
+			return
 		}
-	} else if command == "edit" {
-		tempDir, err := os.MkdirTemp("", "")
+		paste(path)
+	case "edit":
+		tempFile, err := ioutil.TempFile("", "")
 		if err != nil {
 			panic(err)
 		}
-		defer os.RemoveAll(tempDir)
+		defer os.Remove(tempFile.Name())
 
-		path := fmt.Sprintf("%s/clipboard.txt", tempDir)
-		paste(path)
-
-		editor := os.ExpandEnv("$EDITOR")
-		if editor == "$EDITOR" {
-			editor = "vim"
+		paste(tempFile.Name())
+		edit(tempFile.Name())
+		copy(tempFile.Name())
+	case "tmux":
+		tempFile, err := ioutil.TempFile("", "")
+		if err != nil {
+			panic(err)
 		}
+		defer os.Remove(tempFile.Name())
 
-		command := exec.Command(editor, path)
-		command.Stdin = os.Stdin
+		command := exec.Command("tmux", "capture-pane", "-p")
 		command.Stderr = os.Stderr
-		command.Stdout = os.Stdout
+		command.Stdout = tempFile
 		err = command.Run()
 		if err != nil {
 			panic(err)
 		}
+		tempFile.Close()
 
-		copy(path)
-	} else {
+		edit(tempFile.Name())
+		copy(tempFile.Name())
+	default:
+		fmt.Printf("unknown command: %s\n", command)
 		printUsage()
 	}
 }
