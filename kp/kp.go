@@ -165,6 +165,8 @@ func main() {
 
 		edit(tempFile.Name())
 		copy(tempFile.Name())
+	case "help":
+		printUsage()
 	default:
 		fmt.Printf("unknown command: %s\n", command)
 		printUsage()

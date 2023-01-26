@@ -4,6 +4,31 @@ kp works with the copy-paste buffer.
 It's essentially a clone of [xsel](https://linux.die.net/man/1/xsel) that I've tweaked to satisfy several personal use cases.
 I use it as a bridge between my command-line working environment and UI apps (mostly, the browser).
 
+To install:
+
+    $ go install github.com/mpenkov/tools/kp@latest
+
+and ensure that $GOPATH/bin (by default, $HOME/go) is in your $PATH, e.g.:
+
+    $ export GOPATH=$HOME/go
+    $ export PATH=$GOPATH/bin:$PATH
+
+Finally:
+
+    $ kp help
+    kp works with the copy-paste buffer.
+
+    Usage:
+
+            kp <command>
+
+    The commands are:
+
+            copy    Read standard input, write to the copy-paste buffer
+            edit    Edit the contents of the copy-paste buffer using $EDITOR
+            paste   Write the contents of the copy-paste buffer to standard output
+            tmux    Write the contents of the current tmux pane to the copy-paste buffer
+
 ## copy
 
 read stuff into the buffer (copy):
