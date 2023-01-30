@@ -147,14 +147,18 @@ func main() {
 	instance, err := findInstance(flag.Arg(0))
 	if err != nil {
 		log.Fatal(err)
-	} else if *instance.PublicIpAddress == "" {
-		log.Fatalf("instance %q does not have a public IP", flag.Arg(0))
+	} else if instance.State.Name != ec2types.InstanceStateNameRunning {
+		log.Fatalf(
+			"instance %s is currently %s, cannot SSH to it",
+			*instance.InstanceId,
+			instance.State.Name,
+		)
 	}
 
 	if *registerHost {
 		err := register(instance, *registerAlias, *username)
 		if err != nil {
-			log.Fatalf("failed to register host: %s", err)
+			log.Fatalf("failed to register host: %q", err)
 		}
 	}
 
