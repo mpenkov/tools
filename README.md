@@ -3,6 +3,12 @@
 This repository contains a bunch of stuff that I find useful.
 Some of it may be reusable, but most of it is probably useful only to myself.
 
+To install any of these tools:
+
+    $ go install github.com/mpenkov/tools/<toolname>@latest
+
+where <toolname> is one of the below.
+
 ## ghreview
 
 Provides a summary of my github activity across several github repositories during a particular year.
