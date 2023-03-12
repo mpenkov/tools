@@ -64,6 +64,22 @@ func findInstance(instanceId string) (ec2types.Instance, error) {
 	return ec2types.Instance{}, err
 }
 
+func identityFilePath() (string, error) {
+	path := os.ExpandEnv("$IDENTITY_FILE_PATH")
+	if len(path) == 0 {
+		return "", fmt.Errorf("bad IDENTITY_FILE_PATH: %q", path)
+	}
+
+	_, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf(
+			"could not read %q: ensure IDENTITY_FILE_PATH is set correctly",
+			path,
+		)
+	}
+	return path, nil
+}
+
 func register(instance ec2types.Instance, alias, username string) error {
 	defaultAlias := *instance.InstanceId
 	for _, tag := range instance.Tags {
@@ -76,9 +92,9 @@ func register(instance ec2types.Instance, alias, username string) error {
 		alias = defaultAlias
 	}
 
-	identityFilePath := os.ExpandEnv("$IDENTITY_FILE_PATH")
-	if len(identityFilePath) == 0 {
-		return fmt.Errorf("bad IDENTITY_FILE_PATH: %q", identityFilePath)
+	idPath, err := identityFilePath()
+	if err != nil {
+		return err
 	}
 
 	var buf bytes.Buffer
@@ -86,7 +102,8 @@ func register(instance ec2types.Instance, alias, username string) error {
 	buf.WriteString(fmt.Sprintf("Host %s\n", alias))
 	buf.WriteString(fmt.Sprintf("\tHostname %s\n", *instance.PublicIpAddress))
 	buf.WriteString(fmt.Sprintf("\tUser %s\n", username))
-	buf.WriteString(fmt.Sprintf("\tIdentityFile %s\n", identityFilePath))
+	buf.WriteString(fmt.Sprintf("\tIdentityFile %s\n", idPath))
+	buf.WriteString("\tStrictHostKeyChecking=accept-new\n")
 	buf.WriteString("# </shin>\n")
 
 	fmt.Fprintf(os.Stderr, buf.String())
@@ -106,15 +123,15 @@ func register(instance ec2types.Instance, alias, username string) error {
 func ssh(ip string, username string, writeKnownHosts bool) error {
 	userAtHost := fmt.Sprintf("%s@%s", username, ip)
 
-	identityFilePath := os.ExpandEnv("$IDENTITY_FILE_PATH")
-	if len(identityFilePath) == 0 {
-		return fmt.Errorf("bad IDENTITY_FILE_PATH: %q", identityFilePath)
+	idPath, err := identityFilePath()
+	if err != nil {
+		return err
 	}
 
 	params := []string{
 		userAtHost,
 		"-i",
-		identityFilePath,
+		idPath,
 		"-o", "StrictHostKeyChecking=no",
 	}
 	if !writeKnownHosts {
@@ -125,7 +142,7 @@ func ssh(ip string, username string, writeKnownHosts bool) error {
 	command.Stdout = os.Stdout
 	command.Stdin = os.Stdin
 	command.Stderr = os.Stderr
-	err := command.Run()
+	err = command.Run()
 	return err
 }
 
@@ -158,7 +175,7 @@ func main() {
 	if *registerHost {
 		err := register(instance, *registerAlias, *username)
 		if err != nil {
-			log.Fatalf("failed to register host: %q", err)
+			log.Fatalf("failed to register host: %s", err)
 		}
 	}
 

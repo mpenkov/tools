@@ -50,6 +50,27 @@ SSH into an EC2 instance by its ID:
 Requires IDENTITY_FILE_PATH environment variable to be set to e.g. ~/.ssh/identity.pem
 
 Offers a helpful `-register` flag that updates `~/.ssh/config` to simplify reconnecting to the instance, using `scp`, etc.
+For example:
+
+    $ shin -register -alias worker -dnc i-12345689
+    # <shin>
+    Host worker
+            Hostname 1.2.3.4
+            User ubuntu
+            IdentityFile /home/misha/.ssh/identity.pem
+            StrictHostKeyChecking=accept-new
+    # </shin>
+
+The "-dnc" flag prevents shin from making the initial SSH connection.
+The "-alias" flag specifies what to call the new host.
+It will default to the instance ID, or the instance's name, if it has a "Name" tag.
+The standard output shows what was added to your ~/.ssh/config file.
+You can now do this:
+
+    $ ssh worker ls
+    misha@cabron:~/git/tools/shin$ ssh worker ls -lh /home
+    total 4.0K
+    drwxr-xr-x 17 ubuntu ubuntu 4.0K Feb 17  2022 ubuntu
 
 ## workswitch
 
