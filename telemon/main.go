@@ -367,6 +367,7 @@ func sendMessagesToChannel(
 	messages []string,
 ) error {
 	log.Printf("sending %d messages", len(messages))
+	rand.Seed(time.Now().Unix())
 	for _, m := range messages {
 		inputPeer := tg.InputPeerChannel{
 			ChannelID:  channel.ID,
@@ -377,10 +378,12 @@ func sendMessagesToChannel(
 			Message:  m,
 			RandomID: rand.Int63(),
 		}
-		_, err := api.MessagesSendMessage(ctx, &request)
+		updates, err := api.MessagesSendMessage(ctx, &request)
 		if err != nil {
 			return err
 		}
+
+		log.Println(updates.String())
 	}
 	return nil
 }
@@ -447,7 +450,7 @@ func sendMessages(config Config, messages []string) {
 func main() {
 
 	configPath := flag.String("cfg", "gitignore/config.json", "The location of the config file")
-	testTg := flag.Bool("tt", false, "Test Telegram message sending and exit immediately")
+	testTg := flag.String("tt", "", "Test Telegram message sending and exit immediately")
 	flag.Parse()
 
 	config := loadConfig(*configPath)
@@ -455,8 +458,8 @@ func main() {
 	//
 	// main-driven testing and development...
 	//
-	if *testTg {
-		sendMessages(config, []string{"this is a test"})
+	if *testTg != "" {
+		sendMessages(config, []string{*testTg})
 		return
 	}
 
