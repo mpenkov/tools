@@ -481,5 +481,7 @@ func main() {
 		log.Println(text)
 	}
 
-	sendMessages(config, outbox)
+	if len(outbox) > 0 {
+		sendMessages(config, outbox)
+	}
 }
