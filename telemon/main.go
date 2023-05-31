@@ -154,25 +154,31 @@ func emailBody(message io.Reader) string {
 //
 // fetch the envelopes for the most recent messages (no message body).
 //
-func fetchMostRecentMessageEnvelopes(c *client.Client, from uint32, to uint32) ([]*imap.Message, error) {
+func fetchMostRecentMessageEnvelopes(
+	c *client.Client,
+	from uint32,
+	to uint32,
+) (result []*imap.Message, err error) {
+	if !(from < to) {
+		return result, fmt.Errorf("invalid sequence interval from: %d to: %d", from, to)
+	}
 	seqset := new(imap.SeqSet)
 	seqset.AddRange(from, to)
 
 	items := []imap.FetchItem{imap.FetchEnvelope}
 
-	messages := make(chan *imap.Message, to-from)
+	messages := make(chan *imap.Message, to-from+1)
 	done := make(chan error, 1)
 	go func() {
 		done <- c.Fetch(seqset, items, messages)
 	}()
 
-	result := []*imap.Message{}
 	for msg := range messages {
 		result = append(result, msg)
 	}
 
 	if err := <-done; err != nil {
-		return []*imap.Message{}, err
+		return result, err
 	}
 
 	return result, nil
@@ -182,6 +188,10 @@ func fetchMostRecentMessageEnvelopes(c *client.Client, from uint32, to uint32) (
 // fetch the specified messages in their entirety
 //
 func fetchMessages(c *client.Client, seqNums []uint32) (result []*imap.Message, err error) {
+	if len(seqNums) == 0 {
+		return result, nil
+	}
+
 	seqset := new(imap.SeqSet)
 	seqset.AddNum(seqNums...)
 
@@ -231,15 +241,45 @@ func writeLastSeenSeqNum(tempDir string, seqNum uint32) error {
 }
 
 //
+// Calculate the sequence number range
+//
+// max: The maximum sequence number (the most recent message in the inbox)
+// seen: The most recent message we've already seen
+// count: The max number of messages to include in the range
+//
+// Returns (0, 0) to indicate an empty range.
+//
+func seqRange(max, seen, count uint32) (from, to uint32) {
+	from = 1
+	to = max
+	//
+	// We're dealing with unsigned variables here, so only subtract if we're
+	// sure there's no wraparound
+	//
+	if max > count {
+		from = max - count
+	}
+	if from <= seen {
+		from = seen + 1
+	}
+
+	if seen >= to {
+		return 0, 0
+	}
+
+	return from, to
+}
+
+//
 // Returns the bodies of messages that match the specified subject filters
 //
-func readMatchingMessages(config Config) ([]*imap.Message, error) {
+func readMatchingMessages(config Config) ([]*imap.Message, uint32, error) {
 	log.Println("Connecting to server...")
 
 	hostAndPort := fmt.Sprintf("%s:%d", config.IMAP.Host, config.IMAP.Port)
 	c, err := client.DialTLS(hostAndPort, nil)
 	if err != nil {
-		return []*imap.Message{}, err
+		return []*imap.Message{}, uint32(0), err
 	}
 	log.Println("Connected")
 
@@ -249,40 +289,37 @@ func readMatchingMessages(config Config) ([]*imap.Message, error) {
 	}()
 
 	if err := c.Login(config.IMAP.User, config.IMAP.Password); err != nil {
-		return []*imap.Message{}, err
+		return []*imap.Message{}, uint32(0), err
 	}
 	log.Println("Logged in")
 
 	mbox, err := c.Select(config.IMAP.Folder, false)
 	if err != nil {
-		return []*imap.Message{}, err
+		return []*imap.Message{}, uint32(0), err
 	}
 
-	if mbox.Messages == lastSeenSeqNum(config.TempDir) {
-		log.Printf("No new messages (delete %s/seqnum to override)\n", config.TempDir)
-		return []*imap.Message{}, nil
-	}
-	err = writeLastSeenSeqNum(config.TempDir, mbox.Messages)
-	if err != nil {
-		return []*imap.Message{}, err
-	}
+	lastSeen := lastSeenSeqNum(config.TempDir)
 
 	//
 	// First retrieve the most recent messages and match their subjects against
 	// our filters.  Then fetch the actual message bodies for matching
-	// messages.
+	// meskasages.
 	//
 	// The main idea is to skip downloading non-matching messages.
 	//
-	from := uint32(1)
-	to := mbox.Messages
-	if mbox.Messages > config.IMAP.MaxCount {
-		// We're using unsigned integers here, only subtract if the result is > 0
-		from = mbox.Messages - config.IMAP.MaxCount
+	// The range of messages to fetch is [from, to] (inclusive).
+	//
+	from, to := seqRange(mbox.Messages, lastSeen, config.IMAP.MaxCount)
+	if from == 0 && to == 0 {
+		//
+		// No new messages
+		//
+		return []*imap.Message{}, mbox.Messages, nil
 	}
+
 	messageEnvelopes, err := fetchMostRecentMessageEnvelopes(c, from, to)
 	if err != nil {
-		return []*imap.Message{}, err
+		return []*imap.Message{}, uint32(0), err
 	}
 	log.Printf("Fetched %d message envelopes", len(messageEnvelopes))
 
@@ -296,7 +333,7 @@ func readMatchingMessages(config Config) ([]*imap.Message, error) {
 	for _, msg := range messageEnvelopes {
 		subject, err := mime.DecodeHeader(msg.Envelope.Subject)
 		if err != nil {
-			return []*imap.Message{}, err
+			return []*imap.Message{}, uint32(0), err
 		}
 
 		match := false
@@ -313,7 +350,11 @@ func readMatchingMessages(config Config) ([]*imap.Message, error) {
 	}
 
 	log.Printf("Fetching %d matching messages", len(seqNums))
-	return fetchMessages(c, seqNums)
+	messages, err := fetchMessages(c, seqNums)
+	if err != nil {
+		return []*imap.Message{}, uint32(0), err
+	}
+	return messages, mbox.Messages, nil
 }
 
 //
@@ -448,9 +489,9 @@ func sendMessages(config Config, messages []string) {
 }
 
 func main() {
-
 	configPath := flag.String("cfg", "gitignore/config.json", "The location of the config file")
 	testTg := flag.String("tt", "", "Test Telegram message sending and exit immediately")
+	testIMAP := flag.Bool("ti", false, "Test IMAP retrieval and exit immediately")
 	flag.Parse()
 
 	config := loadConfig(*configPath)
@@ -463,7 +504,7 @@ func main() {
 		return
 	}
 
-	messages, err := readMatchingMessages(config)
+	messages, latestSeqNum, err := readMatchingMessages(config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -477,11 +518,22 @@ func main() {
 		outbox = append(outbox, body)
 	}
 
-	for _, text := range outbox {
-		log.Println(text)
+	for i, text := range outbox {
+		log.Printf("[%d] %s", messages[i].SeqNum, text)
+	}
+
+	if *testIMAP {
+		return
 	}
 
 	if len(outbox) > 0 {
 		sendMessages(config, outbox)
+	} else {
+		log.Println("No new messages")
+	}
+
+	err = writeLastSeenSeqNum(config.TempDir, latestSeqNum)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
