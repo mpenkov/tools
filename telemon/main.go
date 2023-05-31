@@ -131,19 +131,20 @@ func emailBody(message io.Reader) string {
 		//
 		// Additional business logic for the tsuitamon notifications.
 		// Strip the footer, insert a datestamp.
+		// Fri, 26 May 2023 07:57:11 +0000
+		// Nb. the date is in GMT, so we need to convert to the local timezone
 		//
 		lines := strings.Split(bodyString, "\r\n")
-
-		// Fri, 26 May 2023 07:57:11 +0000
-		parsedDate, err := time.Parse(time.RFC1123, msg.Header.Get("Date"))
+		parsedDate, err := time.Parse(time.RFC1123Z, msg.Header.Get("Date"))
 		if err != nil {
 			log.Fatal(err)
 		}
+		ldate := parsedDate.Local()
 		dow := []string{"日", "月", "火", "水", "木", "金", "土"}
 		bodyString = fmt.Sprintf(
 			"%s(%s)、%s",
-			parsedDate.Format("1月2日"),
-			dow[int(parsedDate.Weekday())],
+			ldate.Format("1月2日"),
+			dow[int(ldate.Weekday())],
 			strings.Join(lines[1:4], ""),
 		)
 	}
@@ -330,11 +331,14 @@ func readMatchingMessages(config Config) ([]*imap.Message, uint32, error) {
 		subjectFilters = append(subjectFilters, *r)
 	}
 
+	log.Println("Message subjects:")
 	for _, msg := range messageEnvelopes {
 		subject, err := mime.DecodeHeader(msg.Envelope.Subject)
 		if err != nil {
 			return []*imap.Message{}, uint32(0), err
 		}
+
+		log.Printf("[%d] %s\n", msg.SeqNum, subject)
 
 		match := false
 		for _, sf := range subjectFilters {
@@ -518,6 +522,7 @@ func main() {
 		outbox = append(outbox, body)
 	}
 
+	log.Println("Outbox:")
 	for i, text := range outbox {
 		log.Printf("[%d] %s", messages[i].SeqNum, text)
 	}
