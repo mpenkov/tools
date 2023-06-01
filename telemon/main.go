@@ -142,7 +142,7 @@ func emailBody(message io.Reader) string {
 		// Nb. the date is in GMT, so we need to convert to the local timezone
 		//
 		lines := strings.Split(bodyString, "\r\n")
-		parsedDate, err := time.Parse(time.RFC1123Z, msg.Header.Get("Date"))
+		parsedDate, err := parseDate(msg.Header.Get("Date"))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -157,6 +157,23 @@ func emailBody(message io.Reader) string {
 	}
 
 	return strings.Trim(bodyString, "\n")
+}
+
+func parseDate(str string) (time.Time, error) {
+	//
+	// TODO: any other layouts to try?
+	//
+	patterns := []string{
+		time.RFC1123Z,
+		"Mon, 2 Jan 2006 15:04:05 -0700",  // as above, but no padding
+	}
+	for _, p := range patterns {
+		t, err := time.Parse(p, str)
+		if err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("could not parse %q", str)
 }
 
 //

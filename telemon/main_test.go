@@ -24,3 +24,11 @@ func TestSeqRange(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDate(t *testing.T) {
+	str := "Thu, 1 Jun 2023 08:03:09 +0000"
+	_, err := parseDate(str)
+	if err != nil {
+		t.Error(err)
+	}
+}
