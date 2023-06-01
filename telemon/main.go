@@ -160,7 +160,7 @@ func fetchMostRecentMessageEnvelopes(
 	from uint32,
 	to uint32,
 ) (result []*imap.Message, err error) {
-	if !(from < to) {
+	if !(from <= to) {
 		return result, fmt.Errorf("invalid sequence interval from: %d to: %d", from, to)
 	}
 	seqset := new(imap.SeqSet)
