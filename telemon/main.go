@@ -62,8 +62,8 @@ type TelegramConfig struct {
 }
 
 type PushoverConfig struct {
-	Token string
-	User string
+	Token    string
+	User     string
 	Template map[string]string
 }
 
@@ -154,7 +154,11 @@ func emailBody(message io.Reader) string {
 		lines := strings.Split(bodyString, "\r\n")
 		parsedDate, err := parseDate(msg.Header.Get("Date"))
 		if err != nil {
-			log.Fatal(err)
+			//
+			// Ignore the message if the datestamp is too funky
+			//
+			log.Println(err)
+			continue
 		} else {
 			ldate := parsedDate.Local()
 			dow := []string{"日", "月", "火", "水", "木", "金", "土"}
@@ -176,7 +180,7 @@ func parseDate(str string) (time.Time, error) {
 	//
 	patterns := []string{
 		time.RFC1123Z,
-		"Mon, 2 Jan 2006 15:04:05 -0700",  // as above, but no padding
+		"Mon, 2 Jan 2006 15:04:05 -0700", // as above, but no padding
 	}
 	for _, p := range patterns {
 		t, err := time.Parse(p, str)
@@ -576,8 +580,8 @@ func sendMessages(config Config, messages []string) {
 func sendPushNotifications(config Config, messages []string) error {
 	for _, m := range messages {
 		body := map[string]string{
-			"token": config.Pushover.Token,
-			"user": config.Pushover.User,
+			"token":   config.Pushover.Token,
+			"user":    config.Pushover.User,
 			"message": m,
 		}
 		for key, val := range config.Pushover.Template {
