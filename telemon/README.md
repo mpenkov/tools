@@ -17,6 +17,11 @@ The config is JSON that looks like this:
         ],
         "User": "user@fastmail.com"
       },
+      "Pushover": {
+        "User": "secret",
+        "Token": "secret",
+        "Template": {}
+      },
       "Telegram": {
         "APIHash": "secret",
         "APIID": 0123456789,
@@ -26,10 +31,17 @@ The config is JSON that looks like this:
       "TempDir": "/tmp/telemon"
     }
 
+The Telegram section is optional.
+Specify the details to broadcast to a Telegram channel.
+That channel must already exist and belong to the Telegram user identified by the PhoneNumber.
+
+The Pushover section is optional.
+Specify the details to send push notifications.
+See https://pushover.net/api for details.
+
 The IMAP section is mostly self-explanatory.
 The utility reads up to MaxCount most recent message subjects and matches them against SubjectFilters.
-It fetches the bodies of matching messages and sends them to Telegram.ChannelName.
-That channel must already exist and belong to the Telegram user identified by the PhoneNumber.
+It fetches the bodies of matching messages and sends them to Telegram and Pushover.
 
 The TempDir keeps a bunch of temporary data for the utility, including the Telegram session and IMAP message tracking.
 The utility tracks the most recently seen messages from the IMAP inbox, and ignores messages it has already seen.

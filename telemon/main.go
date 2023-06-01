@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"log"
 	"math/rand"
 	"mime/quotedprintable"
+	"net/http"
 	"net/mail"
 	"os"
 	"regexp"
@@ -38,6 +40,7 @@ var (
 	configPath *string = flag.String("cfg", "gitignore/config.json", "The location of the config file")
 	silent     *bool   = flag.Bool("silent", false, "Silence all log output")
 	testTg     *string = flag.String("tt", "", "Test Telegram message sending and exit immediately")
+	testTP     *string = flag.String("tp", "", "Test Pushover message sending and exit immediately")
 	testIMAP   *bool   = flag.Bool("ti", false, "Test IMAP retrieval and exit immediately")
 )
 
@@ -58,8 +61,15 @@ type TelegramConfig struct {
 	ChannelName string
 }
 
+type PushoverConfig struct {
+	Token string
+	User string
+	Template map[string]string
+}
+
 type Config struct {
 	IMAP     IMAPConfig
+	Pushover PushoverConfig
 	Telegram TelegramConfig
 	TempDir  string
 }
@@ -145,15 +155,16 @@ func emailBody(message io.Reader) string {
 		parsedDate, err := parseDate(msg.Header.Get("Date"))
 		if err != nil {
 			log.Fatal(err)
+		} else {
+			ldate := parsedDate.Local()
+			dow := []string{"日", "月", "火", "水", "木", "金", "土"}
+			bodyString = fmt.Sprintf(
+				"%s(%s)、%s",
+				ldate.Format("1月2日"),
+				dow[int(ldate.Weekday())],
+				strings.Join(lines[1:4], ""),
+			)
 		}
-		ldate := parsedDate.Local()
-		dow := []string{"日", "月", "火", "水", "木", "金", "土"}
-		bodyString = fmt.Sprintf(
-			"%s(%s)、%s",
-			ldate.Format("1月2日"),
-			dow[int(ldate.Weekday())],
-			strings.Join(lines[1:4], ""),
-		)
 	}
 
 	return strings.Trim(bodyString, "\n")
@@ -562,6 +573,43 @@ func sendMessages(config Config, messages []string) {
 	})
 }
 
+func sendPushNotifications(config Config, messages []string) error {
+	for _, m := range messages {
+		body := map[string]string{
+			"token": config.Pushover.Token,
+			"user": config.Pushover.User,
+			"message": m,
+		}
+		for key, val := range config.Pushover.Template {
+			body[key] = val
+		}
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+
+		resp, err := http.Post(
+			"https://api.pushover.net/1/messages.json",
+			"application/json",
+			bytes.NewBuffer(data),
+		)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != 200 {
+			log.Print(string(responseBody))
+			return errors.New(resp.Status)
+		}
+	}
+	return nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -572,6 +620,13 @@ func main() {
 	//
 	if *testTg != "" {
 		sendMessages(config, []string{*testTg})
+		return
+	}
+	if *testTP != "" {
+		err := sendPushNotifications(config, []string{*testTP})
+		if err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 
@@ -602,9 +657,19 @@ func main() {
 		return
 	}
 
-	if len(outbox) > 0 {
-		sendMessages(config, outbox)
-	} else {
+	if len(outbox) == 0 {
 		logPrintln("No new messages")
+		return
+	}
+
+	if config.Pushover.User != "" {
+		err := sendPushNotifications(config, outbox)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if config.Telegram.PhoneNumber != "" {
+		sendMessages(config, outbox)
 	}
 }
