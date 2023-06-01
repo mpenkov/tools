@@ -158,7 +158,6 @@ func emailBody(message io.Reader) string {
 			// Ignore the message if the datestamp is too funky
 			//
 			log.Println(err)
-			continue
 		} else {
 			ldate := parsedDate.Local()
 			dow := []string{"日", "月", "火", "水", "木", "金", "土"}
