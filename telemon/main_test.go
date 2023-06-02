@@ -25,10 +25,31 @@ func TestSeqRange(t *testing.T) {
 	}
 }
 
-func TestParseDate(t *testing.T) {
-	str := "Thu, 1 Jun 2023 08:03:09 +0000"
-	_, err := parseDate(str)
-	if err != nil {
-		t.Error(err)
+func TestTranslate(t *testing.T) {
+	table := map[string]string{
+		`(.+) さんは、\s*(\d+時\d+分)\s*(.+を通過しました)。`: "{1}は{2}に{3}",
+		`山田　(.+)さんは(\d+:\d+)に(..されました)。`:        "{1}は{2}に{3}",
+	}
+	first := `Alice さんは、
+17時13分
+東玄関を通過しました。`
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{first, "Aliceは17時13分に東玄関を通過しました"},
+		{
+			`山田　タロウさんは8:57に入室されました。`,
+			`タロウは8:57に入室されました`,
+		},
+		{
+			`山田　タロウさんは18:57に退室されました。`,
+			`タロウは18:57に退室されました`,
+		},
+	} {
+		got := translate(tc.input, table, false)
+		if tc.want != got {
+			t.Errorf("want: %q got: %q", tc.want, got)
+		}
 	}
 }

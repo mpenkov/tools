@@ -28,7 +28,10 @@ The config is JSON that looks like this:
         "PhoneNumber": "secret",
         "ChannelName": "secret"
       },
-      "TempDir": "/tmp/telemon"
+      "TempDir": "/tmp/telemon",
+      "Translator": {
+        "regex": "{1} did {2} at {3} on {4}"
+      }
     }
 
 The Telegram section is optional.
@@ -46,3 +49,7 @@ It fetches the bodies of matching messages and sends them to Telegram and Pushov
 The TempDir keeps a bunch of temporary data for the utility, including the Telegram session and IMAP message tracking.
 The utility tracks the most recently seen messages from the IMAP inbox, and ignores messages it has already seen.
 This means you may call the utility in a tight loop - it will never send the same message twice.
+
+The Translator contains a bunch of regular expressions and what to replace them with in case of a match.
+When there are multiple expressions, translation ceases after the first successful match.
+The order of applying the regexes is arbitrary.

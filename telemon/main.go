@@ -42,6 +42,7 @@ var (
 	testTg     *string = flag.String("tt", "", "Test Telegram message sending and exit immediately")
 	testTP     *string = flag.String("tp", "", "Test Pushover message sending and exit immediately")
 	testIMAP   *bool   = flag.Bool("ti", false, "Test IMAP retrieval and exit immediately")
+	testTran   *bool   = flag.Bool("ttran", false, "Test the translation table")
 )
 
 type IMAPConfig struct {
@@ -68,10 +69,11 @@ type PushoverConfig struct {
 }
 
 type Config struct {
-	IMAP     IMAPConfig
-	Pushover PushoverConfig
-	Telegram TelegramConfig
-	TempDir  string
+	IMAP       IMAPConfig
+	Pushover   PushoverConfig
+	Telegram   TelegramConfig
+	TempDir    string
+	Translator map[string]string
 }
 
 func loadConfig(path string) Config {
@@ -142,52 +144,7 @@ func emailBody(message io.Reader) string {
 		body = decoded
 	}
 
-	bodyString := string(body)
-
-	if strings.Index(bodyString, "『ツイタもん』") != -1 {
-		//
-		// Additional business logic for the tsuitamon notifications.
-		// Strip the footer, insert a datestamp.
-		// Fri, 26 May 2023 07:57:11 +0000
-		// Nb. the date is in GMT, so we need to convert to the local timezone
-		//
-		lines := strings.Split(bodyString, "\r\n")
-		parsedDate, err := parseDate(msg.Header.Get("Date"))
-		if err != nil {
-			//
-			// Ignore the message if the datestamp is too funky
-			//
-			log.Println(err)
-		} else {
-			ldate := parsedDate.Local()
-			dow := []string{"日", "月", "火", "水", "木", "金", "土"}
-			bodyString = fmt.Sprintf(
-				"%s(%s)、%s",
-				ldate.Format("1月2日"),
-				dow[int(ldate.Weekday())],
-				strings.Join(lines[1:4], ""),
-			)
-		}
-	}
-
-	return strings.Trim(bodyString, "\n")
-}
-
-func parseDate(str string) (time.Time, error) {
-	//
-	// TODO: any other layouts to try?
-	//
-	patterns := []string{
-		time.RFC1123Z,
-		"Mon, 2 Jan 2006 15:04:05 -0700", // as above, but no padding
-	}
-	for _, p := range patterns {
-		t, err := time.Parse(p, str)
-		if err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("could not parse %q", str)
+	return strings.Trim(string(body), "\n")
 }
 
 //
@@ -613,6 +570,32 @@ func sendPushNotifications(config Config, messages []string) error {
 	return nil
 }
 
+//
+// Apply the translation table to the string.
+//
+// The key in the table is a regular expression.  The value is a placeholder
+// string that includes groups from the regex match and string literals.
+//
+func translate(s string, table map[string]string, debug bool) string {
+	for pattern, repl := range table {
+		r := regexp.MustCompile(pattern)
+		groups := r.FindStringSubmatch(s)
+		if debug {
+			fmt.Printf("%q %q\n", pattern, groups)
+		}
+		if groups != nil {
+			for i, g := range groups {
+				if i > 0 {
+					placeholder := fmt.Sprintf("{%d}", i)
+					repl = strings.Replace(repl, placeholder, g, -1)
+				}
+			}
+			return repl
+		}
+	}
+	return s
+}
+
 func main() {
 	flag.Parse()
 
@@ -632,6 +615,11 @@ func main() {
 		}
 		return
 	}
+	if *testTran {
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Println(translate(string(data), config.Translator, true))
+		return
+	}
 
 	//
 	// Nb. when running testIMAP, set readonly to true to avoid marking
@@ -648,6 +636,7 @@ func main() {
 		for _, val := range msg.Body {
 			body += emailBody(val)
 		}
+		body = translate(body, config.Translator, false)
 		outbox = append(outbox, body)
 	}
 
