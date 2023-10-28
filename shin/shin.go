@@ -120,7 +120,7 @@ func register(instance ec2types.Instance, alias, username string) error {
 
 }
 
-func ssh(ip string, username string, writeKnownHosts bool) error {
+func ssh(ip string, username string, writeKnownHosts bool, sshArgs []string) error {
 	userAtHost := fmt.Sprintf("%s@%s", username, ip)
 
 	idPath, err := identityFilePath()
@@ -137,6 +137,7 @@ func ssh(ip string, username string, writeKnownHosts bool) error {
 	if !writeKnownHosts {
 		params = append(params, "-o", "UserKnownHostsFile=/dev/null")
 	}
+	params = append(params, sshArgs...)
 
 	command := exec.Command("ssh", params...)
 	command.Stdout = os.Stdout
@@ -180,7 +181,8 @@ func main() {
 	}
 
 	if !*doNotConnect {
-		err := ssh(*instance.PublicIpAddress, *username, *writeKnownHosts)
+		sshArgs := flag.Args()[1:]
+		err := ssh(*instance.PublicIpAddress, *username, *writeKnownHosts, sshArgs)
 		if err != nil {
 			log.Fatal(err)
 		}
