@@ -107,8 +107,8 @@ func (w Worker) predownloadDocumentThumbnail(doc *tg.Document) (Media, error) {
 		for _, attr := range doc.Attributes {
 			switch a := attr.(type) {
 			case *tg.DocumentAttributeVideo:
-				minutes := a.Duration / 60
-				seconds := a.Duration % 60
+				minutes := int(a.Duration) / 60
+				seconds := int(a.Duration) % 60
 				media.Duration = fmt.Sprintf("%02d:%02d", minutes, seconds)
 			}
 		}
