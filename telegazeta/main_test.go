@@ -2,7 +2,6 @@ package telegazeta
 
 import (
 	"fmt"
-	_ "log"
 	"os"
 	"sort"
 	"testing"
@@ -11,23 +10,25 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-func loadMessage(path string) (message tg.Message, err error) {
+func loadMessage(t *testing.T, path string) (message tg.Message) {
+	t.Helper()
+
 	f, err := os.Open(path)
 	if err != nil {
-		return message, err
+		t.Fatal(err)
 	}
 	defer f.Close()
 
 	var buffer bin.Buffer = bin.Buffer{Buf: make([]byte, 1024768)}
 	if _, err := f.Read(buffer.Buf); err != nil {
-		return message, err
+		t.Fatal(err)
 	}
 
 	if err = message.Decode(&buffer); err != nil {
-		return message, err
+		t.Fatal(err)
 	}
 
-	return message, nil
+	return message
 }
 
 func TestDedup(t *testing.T) {
@@ -55,10 +56,7 @@ func TestRealDedup(t *testing.T) {
 		var items ItemList
 		for _, id := range tc.messageID {
 			filename := fmt.Sprintf("testdata/%s.bin", id)
-			m, err := loadMessage(filename)
-			if err != nil {
-				t.Fatalf("unable to load %q: %s", filename, err)
-			}
+			m := loadMessage(t, filename)
 			item := newItem(&m)
 			items = append(items, item)
 		}
@@ -74,7 +72,7 @@ func TestSort(t *testing.T) {
 	var items ItemList
 
 	for _, id := range ids {
-		m, _ := loadMessage(id)
+		m := loadMessage(t, id)
 		items = append(items, newItem(&m))
 	}
 
