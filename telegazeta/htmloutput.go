@@ -292,6 +292,9 @@ func highlightEntities(message string, entities []tg.MessageEntityClass) string 
 				var url []rune = utf16.Decode(urlChunks)
 				builder.WriteString(fmt.Sprintf("<a entity='%d' href='%s' target='_blank'>", entityIndex, string(url)))
 				stack = append(stack, Element{Tag: "</a>", End: end})
+			case *tg.MessageEntityBlockquote:
+				builder.WriteString(fmt.Sprintf("<blockquote entity='%d'>", entityIndex))
+				stack = append(stack, Element{Tag: "</blockquote>", End: end})
 			}
 
 			entityIndex += 1
