@@ -211,31 +211,6 @@ func fetchMessages(c *client.Client, seqNums []uint32) (result []*imap.Message, 
 	return result, nil
 }
 
-func lastSeenSeqNum(tempDir string) uint32 {
-	data, err := os.ReadFile(tempDir + "/seqnum")
-	if err != nil {
-		return 0
-	}
-
-	var seqnum uint32
-	_, err = fmt.Sscanf(string(data), "%d\n", &seqnum)
-	if err != nil {
-		return 0
-	}
-
-	return seqnum
-}
-
-func writeLastSeenSeqNum(tempDir string, seqNum uint32) error {
-	err := os.MkdirAll(tempDir, 0o700)
-	if err != nil {
-		return err
-	}
-	line := fmt.Sprintf("%d\n", seqNum)
-	err = os.WriteFile(tempDir+"/seqnum", []byte(line), 0o600)
-	return err
-}
-
 //
 // Calculate the sequence number range
 //
@@ -375,8 +350,6 @@ func readMatchingMessages(config Config, readonly bool) ([]*imap.Message, error)
 			return []*imap.Message{}, err
 		}
 
-		logPrintf("[seqnum: %d seen: %t] %s\n", msg.SeqNum, seen, subject)
-
 		match := false
 		for _, sf := range subjectFilters {
 			if sf.Match([]byte(subject)) {
@@ -384,6 +357,8 @@ func readMatchingMessages(config Config, readonly bool) ([]*imap.Message, error)
 				break
 			}
 		}
+
+		logPrintf("[seqnum: %d seen: %t match: %t] %s\n", msg.SeqNum, seen, match, subject)
 
 		if !seen && match {
 			seqNums = append(seqNums, msg.SeqNum)
