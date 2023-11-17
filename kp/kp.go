@@ -31,7 +31,7 @@ func copy(path string) {
 	text = string(data)
 	err = clipboard.WriteAll(text)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("clipboard.WriteAll failed: %q", err))
 	}
 	fmt.Printf(text)
 }
