@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -162,27 +163,36 @@ func main() {
 	//
 	flag.Parse()
 
-	instance, err := findInstance(flag.Arg(0))
-	if err != nil {
-		log.Fatal(err)
-	} else if instance.State.Name != ec2types.InstanceStateNameRunning {
-		log.Fatalf(
-			"instance %s is currently %s, cannot SSH to it",
-			*instance.InstanceId,
-			instance.State.Name,
-		)
-	}
+	var ipAddress string
 
-	if *registerHost {
-		err := register(instance, *registerAlias, *username)
+	if net.ParseIP(flag.Arg(0)) != nil {
+		log.Printf("direct")
+		ipAddress = flag.Arg(0)
+	} else {
+		instance, err := findInstance(flag.Arg(0))
 		if err != nil {
-			log.Fatalf("failed to register host: %s", err)
+			log.Fatal(err)
+		} else if instance.State.Name != ec2types.InstanceStateNameRunning {
+			log.Fatalf(
+				"instance %s is currently %s, cannot SSH to it",
+				*instance.InstanceId,
+				instance.State.Name,
+			)
+		}
+
+		ipAddress = *instance.PublicIpAddress
+
+		if *registerHost {
+			err := register(instance, *registerAlias, *username)
+			if err != nil {
+				log.Fatalf("failed to register host: %s", err)
+			}
 		}
 	}
 
 	if !*doNotConnect {
 		sshArgs := flag.Args()[1:]
-		err := ssh(*instance.PublicIpAddress, *username, *writeKnownHosts, sshArgs)
+		err := ssh(ipAddress, *username, *writeKnownHosts, sshArgs)
 		if err != nil {
 			log.Fatal(err)
 		}
