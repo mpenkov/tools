@@ -4,17 +4,18 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"text/template"
 	"time"
 )
 
 type Params struct {
-	Year int
-	WeekNumber int
+	Year         int
+	WeekNumber   int
 	YearProgress string
-	NextYear int
-	MondayDate string
+	NextYear     int
+	MondayDate   string
 }
 
 func main() {
@@ -55,7 +56,15 @@ func main() {
 	var startOfWeek time.Time = now.Add(-time.Duration(daysBefore) * 24 * time.Hour)
 
 	year, month, date := startOfWeek.Date()
-	endOfYear, _ := time.Parse("2006-01-02", fmt.Sprintf("%d-12-31", year))
+
+	//
+	// We use Dec 28 because that's certain to be in the last week of the year
+	// see the docs for time.Time.ISOWeek
+	//
+	endOfYear, err := time.Parse("2006-01-02", fmt.Sprintf("%d-12-28", year))
+	if err != nil {
+		log.Fatal(err)
+	}
 	_, weeksInYear := endOfYear.ISOWeek()
 
 	var params Params
