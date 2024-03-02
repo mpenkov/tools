@@ -185,7 +185,7 @@ func main() {
 		} else if instance.PublicIpAddress != nil {
 			ipAddress = *instance.PublicIpAddress
 		} else {
-			log.Fatal("instance %s does not have an IP address", *instance.InstanceId)
+			log.Fatalf("instance %s does not have an IP address", *instance.InstanceId)
 		}
 
 		if *registerHost {
