@@ -180,7 +180,13 @@ func main() {
 			)
 		}
 
-		ipAddress = *instance.PublicIpAddress
+		if instance.Ipv6Address != nil {
+			ipAddress = *instance.Ipv6Address
+		} else if instance.PublicIpAddress != nil {
+			ipAddress = *instance.PublicIpAddress
+		} else {
+			log.Fatal("instance %s does not have an IP address", *instance.InstanceId)
+		}
 
 		if *registerHost {
 			err := register(instance, *registerAlias, *username)
