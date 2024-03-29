@@ -198,6 +198,15 @@ func resolvePath(path string, username string) string {
 
 	idx := strings.Index(path, ":")
 	host, _ := resolve(path[:idx])
+
+	//
+	// Surround IPv6 IPs in square brackets in order for SCP to treat
+	// them correctly.
+	//
+	if strings.Count(host, ":") > 2 {
+		host = fmt.Sprintf("[%s]", host)
+	}
+
 	return fmt.Sprintf("%s@%s:%s", username, host, path[idx+1:])
 }
 
