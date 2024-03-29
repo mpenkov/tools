@@ -121,9 +121,7 @@ func register(instance ec2types.Instance, alias, username string) error {
 
 }
 
-func ssh(ip string, username string, writeKnownHosts bool, sshArgs []string) error {
-	userAtHost := fmt.Sprintf("%s@%s", username, ip)
-
+func ssh(userAtHost string, writeKnownHosts bool, sshArgs []string) error {
 	idPath, err := identityFilePath()
 	if err != nil {
 		return err
@@ -144,8 +142,63 @@ func ssh(ip string, username string, writeKnownHosts bool, sshArgs []string) err
 	command.Stdout = os.Stdout
 	command.Stdin = os.Stdin
 	command.Stderr = os.Stderr
-	err = command.Run()
-	return err
+	return command.Run()
+}
+
+func scp(src string, dst string, writeKnownHosts bool, sshArgs []string) error {
+	idPath, err := identityFilePath()
+	if err != nil {
+		return err
+	}
+
+	params := []string{"-i", idPath, "-o", "StrictHostKeyChecking=no"}
+	if !writeKnownHosts {
+		params = append(params, "-o", "UserKnownHostsFile=/dev/null")
+	}
+	params = append(params, sshArgs...)
+	params = append(params, src, dst)
+
+	command := exec.Command("scp", params...)
+	command.Stdout = os.Stdout
+	command.Stdin = os.Stdin
+	command.Stderr = os.Stderr
+	return command.Run()
+}
+
+func resolve(host string) (ip string, instance ec2types.Instance) {
+	if net.ParseIP(host) != nil {
+		return host, ec2types.Instance{}
+	}
+
+	instance, err := findInstance(host)
+	if err != nil {
+		log.Fatal(err)
+	} else if instance.State.Name != ec2types.InstanceStateNameRunning {
+		log.Fatalf(
+			"instance %s is currently %s, cannot SSH to it",
+			*instance.InstanceId,
+			instance.State.Name,
+		)
+	}
+
+	if instance.Ipv6Address != nil {
+		return *instance.Ipv6Address, instance
+	} else if instance.PublicIpAddress != nil {
+		return *instance.PublicIpAddress, instance
+	}
+
+	log.Fatalf("instance %s does not have an IP address", *instance.InstanceId)
+	return "", ec2types.Instance{}
+}
+
+func resolvePath(path string, username string) string {
+	if !strings.Contains(path, ":") {
+		return path
+	}
+
+	idx := strings.Index(path, ":")
+	host, _ := resolve(path[:idx])
+	return fmt.Sprintf("%s@%s:%s", username, host, path[idx+1:])
 }
 
 var (
@@ -154,6 +207,7 @@ var (
 	writeKnownHosts = flag.Bool("known", false, "write the fingerprint to ~/.ssh/known_hosts during initial connection")
 	registerAlias   = flag.String("alias", "", "override the alias to register")
 	username        = flag.String("username", "ubuntu", "the username to use for the connection")
+	scpMode         = flag.Bool("scp", false, "behave like scp instead of ssh")
 )
 
 func main() {
@@ -163,44 +217,27 @@ func main() {
 	//
 	flag.Parse()
 
-	var ipAddress string
-
-	if net.ParseIP(flag.Arg(0)) != nil {
-		log.Printf("direct")
-		ipAddress = flag.Arg(0)
+	if *scpMode {
+		src := resolvePath(flag.Arg(0), *username)
+		dst := resolvePath(flag.Arg(1), *username)
+		sshArgs := flag.Args()[2:]
+		scp(src, dst, *writeKnownHosts, sshArgs)
 	} else {
-		instance, err := findInstance(flag.Arg(0))
-		if err != nil {
-			log.Fatal(err)
-		} else if instance.State.Name != ec2types.InstanceStateNameRunning {
-			log.Fatalf(
-				"instance %s is currently %s, cannot SSH to it",
-				*instance.InstanceId,
-				instance.State.Name,
-			)
-		}
+		ip, instance := resolve(flag.Arg(0))
+		sshArgs := flag.Args()[1:]
 
-		if instance.Ipv6Address != nil {
-			ipAddress = *instance.Ipv6Address
-		} else if instance.PublicIpAddress != nil {
-			ipAddress = *instance.PublicIpAddress
-		} else {
-			log.Fatalf("instance %s does not have an IP address", *instance.InstanceId)
-		}
-
-		if *registerHost {
+		if *registerHost && instance.InstanceId != nil {
 			err := register(instance, *registerAlias, *username)
 			if err != nil {
 				log.Fatalf("failed to register host: %s", err)
 			}
 		}
-	}
 
-	if !*doNotConnect {
-		sshArgs := flag.Args()[1:]
-		err := ssh(ipAddress, *username, *writeKnownHosts, sshArgs)
-		if err != nil {
-			log.Fatal(err)
+		if !*doNotConnect {
+			dst := fmt.Sprintf("%s@%s", *username, ip)
+			if err := ssh(dst, *writeKnownHosts, sshArgs); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 }
