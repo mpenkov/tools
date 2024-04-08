@@ -59,7 +59,14 @@ func (s State) Save() error {
 func (s State) Activate() {
 	setInputLanguage(s.InputLanguage)
 	setTouchpadOff(s.TouchpadOff)
-	setMouseLocation(s.MouseLocationX, s.MouseLocationY)
+
+	data, err := os.ReadFile(os.ExpandEnv("$HOME/.config/workswitch/ignore-mouse"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if strings.Trim(string(data), "\n") != "1" {
+		setMouseLocation(s.MouseLocationX, s.MouseLocationY)
+	}
 }
 
 func findJson(workspace int) string {
