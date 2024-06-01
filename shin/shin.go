@@ -29,9 +29,9 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-func findInstance(instanceId string) (ec2types.Instance, error) {
+func findInstance(instanceId string, region string) (ec2types.Instance, error) {
 	ctx := context.TODO()
-	config, err := config.LoadDefaultConfig(ctx)
+	config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -165,12 +165,12 @@ func scp(src string, dst string, writeKnownHosts bool, sshArgs []string) error {
 	return command.Run()
 }
 
-func resolve(host string) (ip string, instance ec2types.Instance) {
+func resolve(host string, region string) (ip string, instance ec2types.Instance) {
 	if net.ParseIP(host) != nil {
 		return host, ec2types.Instance{}
 	}
 
-	instance, err := findInstance(host)
+	instance, err := findInstance(host, region)
 	if err != nil {
 		log.Fatal(err)
 	} else if instance.State.Name != ec2types.InstanceStateNameRunning {
@@ -191,13 +191,13 @@ func resolve(host string) (ip string, instance ec2types.Instance) {
 	return "", ec2types.Instance{}
 }
 
-func resolvePath(path string, username string) string {
+func resolvePath(path string, username string, region string) string {
 	if !strings.Contains(path, ":") {
 		return path
 	}
 
 	idx := strings.Index(path, ":")
-	host, _ := resolve(path[:idx])
+	host, _ := resolve(path[:idx], region)
 
 	//
 	// Surround IPv6 IPs in square brackets in order for SCP to treat
@@ -217,6 +217,7 @@ var (
 	registerAlias   = flag.String("alias", "", "override the alias to register")
 	username        = flag.String("username", "ubuntu", "the username to use for the connection")
 	scpMode         = flag.Bool("scp", false, "behave like scp instead of ssh")
+	region          = flag.String("region", "us-east-2", "the AWS region within which to work")
 )
 
 func main() {
@@ -227,12 +228,12 @@ func main() {
 	flag.Parse()
 
 	if *scpMode {
-		src := resolvePath(flag.Arg(0), *username)
-		dst := resolvePath(flag.Arg(1), *username)
+		src := resolvePath(flag.Arg(0), *username, *region)
+		dst := resolvePath(flag.Arg(1), *username, *region)
 		sshArgs := flag.Args()[2:]
 		scp(src, dst, *writeKnownHosts, sshArgs)
 	} else {
-		ip, instance := resolve(flag.Arg(0))
+		ip, instance := resolve(flag.Arg(0), *region)
 		sshArgs := flag.Args()[1:]
 
 		if *registerHost && instance.InstanceId != nil {
