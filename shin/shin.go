@@ -29,9 +29,13 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-func findInstance(instanceId string, region string) (ec2types.Instance, error) {
+func findInstance(instanceId string, region string, profile string) (ec2types.Instance, error) {
 	ctx := context.TODO()
-	config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	config, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion(region),
+		config.WithSharedConfigProfile(profile),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,22 +69,6 @@ func findInstance(instanceId string, region string) (ec2types.Instance, error) {
 	return ec2types.Instance{}, err
 }
 
-func identityFilePath() (string, error) {
-	path := os.ExpandEnv("$IDENTITY_FILE_PATH")
-	if len(path) == 0 {
-		return "", fmt.Errorf("bad IDENTITY_FILE_PATH: %q", path)
-	}
-
-	_, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf(
-			"could not read %q: ensure IDENTITY_FILE_PATH is set correctly",
-			path,
-		)
-	}
-	return path, nil
-}
-
 func register(instance ec2types.Instance, alias, username string) error {
 	defaultAlias := *instance.InstanceId
 	for _, tag := range instance.Tags {
@@ -93,17 +81,12 @@ func register(instance ec2types.Instance, alias, username string) error {
 		alias = defaultAlias
 	}
 
-	idPath, err := identityFilePath()
-	if err != nil {
-		return err
-	}
-
 	var buf bytes.Buffer
 	buf.WriteString("\n# <shin>\n")
 	buf.WriteString(fmt.Sprintf("Host %s\n", alias))
 	buf.WriteString(fmt.Sprintf("\tHostname %s\n", *instance.PublicIpAddress))
 	buf.WriteString(fmt.Sprintf("\tUser %s\n", username))
-	buf.WriteString(fmt.Sprintf("\tIdentityFile %s\n", idPath))
+	buf.WriteString(fmt.Sprintf("\tIdentityFile %s\n", *pemPath))
 	buf.WriteString("\tStrictHostKeyChecking=accept-new\n")
 	buf.WriteString("# </shin>\n")
 
@@ -122,15 +105,9 @@ func register(instance ec2types.Instance, alias, username string) error {
 }
 
 func ssh(userAtHost string, writeKnownHosts bool, sshArgs []string) error {
-	idPath, err := identityFilePath()
-	if err != nil {
-		return err
-	}
-
 	params := []string{
 		userAtHost,
-		"-i",
-		idPath,
+		"-i", *pemPath,
 		"-o", "StrictHostKeyChecking=no",
 	}
 	if !writeKnownHosts {
@@ -146,12 +123,7 @@ func ssh(userAtHost string, writeKnownHosts bool, sshArgs []string) error {
 }
 
 func scp(src string, dst string, writeKnownHosts bool, sshArgs []string) error {
-	idPath, err := identityFilePath()
-	if err != nil {
-		return err
-	}
-
-	params := []string{"-i", idPath, "-o", "StrictHostKeyChecking=no"}
+	params := []string{"-i", *pemPath, "-o", "StrictHostKeyChecking=no"}
 	if !writeKnownHosts {
 		params = append(params, "-o", "UserKnownHostsFile=/dev/null")
 	}
@@ -165,12 +137,12 @@ func scp(src string, dst string, writeKnownHosts bool, sshArgs []string) error {
 	return command.Run()
 }
 
-func resolve(host string, region string) (ip string, instance ec2types.Instance) {
+func resolve(host string, region string, profile string) (ip string, instance ec2types.Instance) {
 	if net.ParseIP(host) != nil {
 		return host, ec2types.Instance{}
 	}
 
-	instance, err := findInstance(host, region)
+	instance, err := findInstance(host, region, profile)
 	if err != nil {
 		log.Fatal(err)
 	} else if instance.State.Name != ec2types.InstanceStateNameRunning {
@@ -191,13 +163,13 @@ func resolve(host string, region string) (ip string, instance ec2types.Instance)
 	return "", ec2types.Instance{}
 }
 
-func resolvePath(path string, username string, region string) string {
+func resolvePath(path string, username string, region string, profile string) string {
 	if !strings.Contains(path, ":") {
 		return path
 	}
 
 	idx := strings.Index(path, ":")
-	host, _ := resolve(path[:idx], region)
+	host, _ := resolve(path[:idx], region, profile)
 
 	//
 	// Surround IPv6 IPs in square brackets in order for SCP to treat
@@ -218,6 +190,8 @@ var (
 	username        = flag.String("username", "ubuntu", "the username to use for the connection")
 	scpMode         = flag.Bool("scp", false, "behave like scp instead of ssh")
 	region          = flag.String("region", "us-east-2", "the AWS region within which to work")
+	profile         = flag.String("profile", "default", "the AWS profile to use")
+	pemPath         = flag.String("pem", os.ExpandEnv("$IDENTITY_FILE_PATH"), "the identity file to use when connecting via SSH")
 )
 
 func main() {
@@ -228,12 +202,12 @@ func main() {
 	flag.Parse()
 
 	if *scpMode {
-		src := resolvePath(flag.Arg(0), *username, *region)
-		dst := resolvePath(flag.Arg(1), *username, *region)
+		src := resolvePath(flag.Arg(0), *username, *region, *profile)
+		dst := resolvePath(flag.Arg(1), *username, *region, *profile)
 		sshArgs := flag.Args()[2:]
 		scp(src, dst, *writeKnownHosts, sshArgs)
 	} else {
-		ip, instance := resolve(flag.Arg(0), *region)
+		ip, instance := resolve(flag.Arg(0), *region, *profile)
 		sshArgs := flag.Args()[1:]
 
 		if *registerHost && instance.InstanceId != nil {
