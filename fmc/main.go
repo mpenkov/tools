@@ -58,7 +58,6 @@ func query(
 	calendarQuery := caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
 			Name:  "VCALENDAR",
-			Props: []string{"VERSION"},
 			Comps: []caldav.CalendarCompRequest{{
 				Name: "VEVENT",
 				Props: []string{
@@ -92,10 +91,6 @@ func query(
 		summary := obj.Data.Children[0].Props.Get("SUMMARY")
 		dtstart := obj.Data.Children[0].Props.Get("DTSTART")
 		tzid := dtstart.Params.Get("TZID")
-
-		// fmt.Printf("\t\t%s = %s\n", summary.Name, summary.Value)
-		// fmt.Printf("\t\t%s = %s\n", dtstart.Name, dtstart.Value)
-		// fmt.Printf("\t\t%s = %s\n", "TZID", tzid)
 
 		location, err := time.LoadLocation(tzid)
 		if err != nil {

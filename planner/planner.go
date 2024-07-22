@@ -4,17 +4,16 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"time"
-
-	"context"
 	"net/http"
+	"os"
 	"os/signal"
 	"sort"
+	"time"
 
 	webdav "github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
@@ -23,9 +22,15 @@ import (
 //go:embed secret.json
 var secretBytes []byte
 
+func debug(fmt string, args ...any) {
+	if os.ExpandEnv("$DEBUG") != "" {
+		log.Printf(fmt, args...)
+	}
+}
+
 type Secret struct {
-	Username string
-	Password string
+	Username  string
+	Password  string
 	Calendars []string
 }
 
@@ -46,9 +51,11 @@ func query(
 	ctx context.Context,
 	client *caldav.Client,
 	calendarPath string,
+	today time.Time,
 	start time.Time,
 	end time.Time,
 ) (events []Event, err error) {
+	debug("query start = %q end = %q\n", start, end)
 	calendarQuery := caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
 			Name: "VCALENDAR",
@@ -60,16 +67,20 @@ func query(
 					"DTSTART",
 					"DTEND",
 					"DURATION",
+					"RRULE",
+					"RECURRENCE-ID",
 				},
 			}},
 		},
 		CompFilter: caldav.CompFilter{
 			Name: "VCALENDAR",
-			Comps: []caldav.CompFilter{{
-				Name:  "VEVENT",
-				Start: start,
-				End:   end,
-			}},
+			Comps: []caldav.CompFilter{
+				{
+					Name:  "VEVENT",
+					Start: start,
+					End:   end,
+				},
+			},
 		},
 	}
 
@@ -84,21 +95,48 @@ func query(
 
 		summary := obj.Data.Children[0].Props.Get("SUMMARY")
 		dtstart := obj.Data.Children[0].Props.Get("DTSTART")
+		rrule := obj.Data.Children[0].Props.Get("RRULE")
 		tzid := dtstart.Params.Get("TZID")
 
 		location, err := time.LoadLocation(tzid)
 		if err != nil {
-			log.Fatal(err)
+			debug("LoadLocation summary = %q err = %q", summary, err)
 			continue
 		}
 
+		//
+		// TODO: handle all-day events
+		//
 		startTime, err := time.ParseInLocation("20060102T150405", dtstart.Value, location)
 		if err != nil {
-			log.Printf("ParseInLocation summary = %q err = %q", summary, err)
+			debug("ParseInLocation summary = %q err = %q", summary, err)
 			continue
 		}
 
+		//
+		// TODO: handle recurring events
+		//
+		// https://stackoverflow.com/questions/37711699/expanding-recurring-events-in-caldav
+		//
+		// Currently they are not being expanded, so their start/end dates are wrong.
+		// In theory, we can get the server to expand them for us, but I can't
+		// figure out how do to this, so I'm handling the expansion myself.
+		//
 		event := Event{startTime, summary.Value}
+		if rrule != nil {
+			debug("event = %q name = %q value = %q\n", event, rrule.Name, rrule.Value)
+			if rrule.Value == "FREQ=WEEKLY" {
+				//
+				// adjust the start time so that it occurs this week
+				//
+				year, week := today.ISOWeek()
+				y, w := event.Start.ISOWeek()
+				newStart := event.Start.AddDate(year-y, 0, 7*(week-w))
+				event.Start = newStart
+			} else {
+				debug("summary = %q date expansion for rrule %q not implemented\n", summary, rrule.Value)
+			}
+		}
 		events = append(events, event)
 	}
 
@@ -148,12 +186,12 @@ func main() {
 	gctx := context.Background()
 	gctx, _ = signal.NotifyContext(gctx, os.Interrupt)
 
-	start := today.AddDate(0, -1, 0)
-	end := today.AddDate(0, 7, 0)
+	start := today.AddDate(0, 0, -1)
+	end := today.AddDate(0, 0, 7)
 
 	var events []Event
 	for _, path := range secret.Calendars {
-		evts, err := query(gctx, caldavClient, path, start, end)
+		evts, err := query(gctx, caldavClient, path, today, start, end)
 		if err != nil {
 			log.Fatal(err)
 		}
