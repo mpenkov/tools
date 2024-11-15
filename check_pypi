@@ -1,0 +1,130 @@
+#!/usr/bin/env python
+
+import argparse
+import json
+import sys
+import urllib.request
+import time
+
+
+def by_upload_time(pair: tuple[str, dict]) -> str:
+    info = pair[1][0]
+    return info['upload_time']
+
+
+def package_releases(package: str) -> dict:
+    url = f'https://pypi.org/pypi/{package}/json'
+    with urllib.request.urlopen(url, timeout=5) as response:
+        assert response.status == 200
+        data = response.read()
+
+    package_info = json.loads(data)
+    return package_info['releases']
+
+
+def parse_version(vs: str) -> tuple[int, int, int]:
+    elts = vs.split('.')
+    major = int(elts[0])
+    minor = int(elts[1])
+    try:
+        patch = int(elts[2])
+    except IndexError:
+        patch = 0
+    return major, minor, patch
+
+
+def pypi_url(package: str, version: str) -> str:
+    return f'https://pypi.org/project/{package}/{version}'
+
+
+def parse_pipfreeze(line: str) -> tuple[str, str]:
+    package, version = line.strip().split("==")
+    return package, version
+
+
+def print_upgrade(kind: str, package: str, installed_version: str, upgrade: tuple):
+    version, info = upgrade
+    print(
+        f'{package}\t{kind}: {installed_version} -> {version}\t'
+        f'{info[0]["upload_time"][:10]}\t{pypi_url(package, version)}'
+    )
+
+
+def print_upgrades(package: str, installed_version: str) -> int:
+    major, minor, patch = parse_version(installed_version)
+
+
+    #
+    # releases is keyed by the version number.  The values are a list of
+    # files contained by the release (wheels, source distro, etc).
+    #
+    releases = package_releases(package)
+
+    major_upgrades = []
+    minor_upgrades = []
+    patch_upgrades = []
+
+    for rver, rinfo in releases.items():
+        try:
+            rmaj, rmin, rpatch = parse_version(rver)
+        except (IndexError, ValueError) as err:
+            # print(f'parse_version({rver!r}) failed: {err}', file=sys.stderr)
+            continue
+
+        if len(rinfo) == 0:
+            #
+            # release contains no files, ignore it
+            #
+            continue
+        elif rmaj > major:
+            major_upgrades.append((rver, rinfo))
+        elif rmaj == major and rmin > minor:
+            minor_upgrades.append((rver, rinfo))
+        elif (rmaj, rmin) == (major, minor) and rpatch > patch:
+            patch_upgrades.append((rver, rinfo))
+
+    major_upgrades = sorted(major_upgrades, key=by_upload_time)
+    minor_upgrades = sorted(minor_upgrades, key=by_upload_time)
+    patch_upgrades = sorted(patch_upgrades, key=by_upload_time, reverse=True)
+
+    retval = 0
+
+    if major_upgrades:
+        print_upgrade('major', package, installed_version, major_upgrades[0])
+        retval += 100
+
+    if minor_upgrades:
+        print_upgrade('minor', package, installed_version, minor_upgrades[0])
+        retval += 10
+
+    if patch_upgrades:
+        print_upgrade('patch', package, installed_version, patch_upgrades[0])
+        retval += 1
+
+    return retval
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--package")
+    parser.add_argument("--version")
+    parser.add_argument("--batch", action='store_true', help="read pip-freeze output from stdin")
+    args = parser.parse_args()
+
+    if args.batch:
+        for line in sys.stdin:
+            try:
+                package, installed_version = parse_pipfreeze(line)
+            except ValueError as err:
+                print(f'parse_pipfreeze({line!r}) failed: {err}', file=sys.stderr)
+                continue
+            print_upgrades(package, installed_version)
+            time.sleep(1)
+    elif args.package is None and args.version is None:
+        parser.error('--package and --version are required unless --batch is specified')
+    else:
+        return print_upgrades(args.package, args.version)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
