@@ -37,7 +37,7 @@ def pypi_url(package: str, version: str) -> str:
     return f'https://pypi.org/project/{package}/{version}'
 
 
-def parse_pipfreeze(line: str) -> tuple[str, str]:
+def parse_pip_requirements(line: str) -> tuple[str, str]:
     package, version = line.strip().split("==")
     return package, version
 
@@ -50,7 +50,15 @@ def print_upgrade(kind: str, package: str, installed_version: str, upgrade: tupl
     )
 
 
-def print_upgrades(package: str, installed_version: str) -> int:
+def print_upgrade_pip(kind: str, package: str, installed_version: str, upgrade: tuple):
+    version, info = upgrade
+    print(
+        f'{package}=={version} # {kind} {installed_version} -> {version} '
+        f'{info[0]["upload_time"][:10]} {pypi_url(package, version)}'
+    )
+
+
+def print_upgrades(package: str, installed_version: str, print_fn: callable) -> int:
     major, minor, patch = parse_version(installed_version)
 
 
@@ -90,15 +98,15 @@ def print_upgrades(package: str, installed_version: str) -> int:
     retval = 0
 
     if major_upgrades:
-        print_upgrade('major', package, installed_version, major_upgrades[0])
+        print_fn('major', package, installed_version, major_upgrades[0])
         retval += 100
 
     if minor_upgrades:
-        print_upgrade('minor', package, installed_version, minor_upgrades[0])
+        print_fn('minor', package, installed_version, minor_upgrades[0])
         retval += 10
 
     if patch_upgrades:
-        print_upgrade('patch', package, installed_version, patch_upgrades[0])
+        print_fn('patch', package, installed_version, patch_upgrades[0])
         retval += 1
 
     return retval
@@ -108,22 +116,26 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--package")
     parser.add_argument("--version")
-    parser.add_argument("--batch", action='store_true', help="read pip-freeze output from stdin")
+    parser.add_argument("--requirements", action='store_true', help="output pip requirements format to stdout")
     args = parser.parse_args()
 
-    if args.batch:
+    print_fn = print_upgrade
+    if args.requirements:
+        print_fn = print_upgrade_pip
+
+    if args.package is None and args.version is None:
+        print('reading pip requirements format from stdin', file=sys.stderr)
         for line in sys.stdin:
             try:
-                package, installed_version = parse_pipfreeze(line)
+                package, installed_version = parse_pip_requirements(line)
             except ValueError as err:
-                print(f'parse_pipfreeze({line!r}) failed: {err}', file=sys.stderr)
+                print(f'parse_pip_requirements({line!r}) failed: {err}', file=sys.stderr)
                 continue
-            print_upgrades(package, installed_version)
+            print_upgrades(package, installed_version, print_fn)
+            sys.stdout.flush()
             time.sleep(1)
-    elif args.package is None and args.version is None:
-        parser.error('--package and --version are required unless --batch is specified')
     else:
-        return print_upgrades(args.package, args.version)
+        return print_upgrades(args.package, args.version, print_fn)
 
 
 if __name__ == "__main__":
