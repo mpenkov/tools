@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import re
+import sys
+import urllib.request
+import urllib.parse
+
+date_regex = re.compile(r'(19\d\d|20\d\d)')
+
+
+def extract_year(filename: str) -> str:
+    match = date_regex.search(filename)
+    if match:
+        return match.group(1)
+    return ''
+
+
+def extract_title(filename: str, year: str) -> str:
+    try:
+        title = filename[:filename.index(year)]
+        return title.strip('() .').lower()
+    except Exception:
+        return ''
+
+
+def scrub_title(title: str) -> str:
+    title = ''.join([
+        ch
+        for ch in title.replace(' ', '.')
+        if ch.isalnum() or ch == '.'
+    ])
+    return title
+
+
+def query(title: str, year: str, what: str = 'movie') -> dict:
+    tmdb_token = os.environ['TMDB_API_TOKEN']
+    safe_title = urllib.parse.quote_plus(title.replace('.', ' '))
+    url = (
+        f'https://api.themoviedb.org/3/search/{what}?'
+        'include_adult=false&language=en-US&page=1&'
+        f'query={safe_title}'
+    )
+    if year:
+        url += f'&year={year}'
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {tmdb_token}',
+    }
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request) as response:
+        assert response.status == 200
+        results = json.load(response)
+
+    return results
+
+
+def longest_prefix(elts: list[str]) -> str:
+    maxlen = min([len(elt) for elt in elts])
+    assert maxlen >= 1
+    for plen in range(1, maxlen + 1):
+        prefix = elts[0][:plen]
+        for elt in elts:
+            if elt[:plen] != prefix:
+                return elt[:plen - 1]
+
+    return elts[0][:maxlen]
+
+
+def rename_subdir_contents(basename: str, oldnames: list[str]) -> list[str]:
+    #
+    # If the subdir only contains one file, then that's the movie file,
+    # and renaming it is straightforward.
+    #
+    # Otherwise, look for the longest prefix and replace that with the name
+    # of the movie (title_year, more specifically).
+    #
+    if len(oldnames) == 1:
+        _, ext = os.path.splitext(oldnames[0])
+        return [basename + ext]
+
+    prefix = longest_prefix([os.path.splitext(name)[0] for name in oldnames])
+    newnames = [name.replace(prefix, basename) for name in oldnames]
+    return newnames
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('path')
+    parser.add_argument('-i', '--interactive', action='store_true')
+    parser.add_argument('-w', '--what', default='movie')
+    parser.add_argument('--subdir', action='store_true')
+    args = parser.parse_args()
+
+    path = args.path.rstrip('/')
+    assert os.path.exists(path)
+
+    basename = os.path.basename(path)
+
+    if args.subdir:
+        assert os.path.isdir(args.path)
+
+        #
+        # Don't handle nested subdirectories, only files.
+        #
+        old_names = [
+            f
+            for f in os.listdir(args.path)
+            if os.path.isfile(os.path.join(args.path, f))
+            and os.path.splitext(f)[1] in ('.mp4', '.mkv', '.srt')
+        ]
+        new_names = rename_subdir_contents(basename, old_names)
+        for old, new in zip(old_names, new_names):
+            print(f'{old!r} -> {new!r}')
+
+        response = input('continue? [yes] / no ')
+        if response.lower() in ('', 'y', 'yes'):
+            with open(os.path.join(args.path, 'rename_tmdb.log'), 'at') as fout:
+                for old, new in zip(old_names, new_names):
+                    print(f'{old}\t{new}', file=fout)
+
+            for old, new in zip(old_names, new_names):
+                src = os.path.join(args.path, old)
+                dst = os.path.join(args.path, new)
+                os.rename(src, dst)
+
+        return
+
+    year = extract_year(basename)
+
+    if args.interactive:
+        print(f'{basename = !r}')
+        try:
+            response = input(f'{year = }.  Press Enter or input correct year: ')
+        except KeyboardInterrupt:
+            print()
+            return 0
+        year = response.strip() or year
+
+    title = extract_title(basename, year)
+
+    if args.interactive:
+        response = input(f'{title = }.  Press Enter or input correct title: ')
+        title = response.strip() or title
+
+    results = query(title, year, args.what)
+
+    if args.interactive:
+        for i, r in enumerate(results['results']):
+            try:
+                title = r['title']
+                date = r['release_date']
+            except KeyError:
+                title = r['name']
+                date = r['first_air_date']
+
+            print(f'[ {i+1} ] {title} / {date}')
+        if len(results['results']) == 1:
+            best = results['results'][0]
+        else:
+            response = input('which is the correct match? ')
+            best = results['results'][int(response.strip())-1]
+    else:
+        best = results['results'][0]
+
+    try:
+        best_title = best['title']
+        best_year = best['release_date'][:4]
+    except KeyError:
+        best_title = best['name']
+        best_year = best['first_air_date'][:4]
+
+    new_filename = f'{scrub_title(best_title)}_{best_year}'
+    if os.path.isfile(path):
+        _, ext = os.path.splitext(path)
+        new_filename += ext
+
+    dirname = os.path.dirname(path)
+    new_path = os.path.join(dirname, new_filename)
+    response = input(f'rename {basename!r} to {new_filename!r}? [yes] / no ')
+    if response.lower() in ('', 'y', 'yes'):
+        with open(os.path.join(dirname, 'rename_tmdb.log'), 'at') as fout:
+            print(f'{basename}\t{new_filename}', file=fout)
+
+        #
+        # TODO: handle directory contents: movie file, subtitle files, etc.
+        #
+        os.rename(path, new_path)
+
+
+def test_extract_year():
+    test_cases = [
+        ('Being There (1979) BDRip.mkv', '1979'),
+        ('Casino.1995.1080p.BluRay.x264.anoXmous', '1995'),
+    ]
+
+    for filename, want in test_cases:
+        got = extract_year(want)
+        if want != got:
+            print(f'extract_year: {filename = !r} {want = !r} {got = !r}')
+
+
+def test_extract_title():
+    test_cases = [
+        ('Being There (1979) BDRip.mkv', '1979', 'being there'),
+        ('Casino.1995.1080p.BluRay.x264.anoXmous', '1995', 'casino'),
+    ]
+
+    for filename, year, want in test_cases:
+        got = extract_title(filename, year)
+        if want != got:
+            print(f'extract_title: {filename = !r} {want = !r} {got = !r}')
+
+
+def test_scrub_title():
+    test_cases = [
+        ('Being There', 'Being.There'),
+        ('Me,.Myself.&.Irene', 'Me.Myself.and.Irene'),
+    ]
+
+    for title, want in test_cases:
+        got = scrub_title(title)
+        if want != got:
+            print(f'scrub_title: {title = !r} {want = !r}')
+
+
+def test_longest_prefix():
+    test_cases = [
+        [['fooz', 'fool', 'foobar', 'foop'], 'foo'],
+    ]
+    for elts, want in test_cases:
+        got = longest_prefix(elts)
+        if want != got:
+            print(f'longest_prefix: {elts = !r} {want = !r} {got = !r}')
+
+
+if __name__ == '__main__':
+    if os.environ.get('TEST', '') == '1':
+        test_extract_year()
+        test_extract_title()
+        test_scrub_title()
+        test_longest_prefix()
+    else:
+        main()

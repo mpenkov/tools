@@ -1,0 +1,22 @@
+#!/usr/bin/python
+import os
+import subprocess
+import sys
+import tempfile
+
+paths = [line.strip() for line in sys.stdin]
+with tempfile.NamedTemporaryFile(prefix='bulk-rename-', suffix='.txt', mode='wt') as tmp:
+    for p in paths:
+        print(p, file=tmp)
+    tmp.flush()
+
+    subprocess.check_call([os.environ.get('EDITOR', 'vim'), tmp.name])
+
+    with open(tmp.name) as fin:
+        new_paths = [line.strip() for line in fin]
+
+    assert len(paths) == len(new_paths)
+
+for p, np in zip(paths, new_paths):
+    if p != np:
+        os.rename(p, np)
