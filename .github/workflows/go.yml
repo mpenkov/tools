@@ -27,6 +27,11 @@ jobs:
 
     - run: mkdir bin
 
+    #
+    # The build won't run without this file
+    #
+    - run: touch planner/secret.json
+
     - name: Build ${{ matrix.subdir }}
       run: go build -v -o bin
       working-directory: ${{ matrix.subdir }}
