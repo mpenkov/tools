@@ -127,12 +127,16 @@ func query(
 			debug("event = %q name = %q value = %q\n", event, rrule.Name, rrule.Value)
 			if rrule.Value == "FREQ=WEEKLY" {
 				//
-				// adjust the start time so that it occurs this week
+				// fast-forward the start time so that it occurs during this week
 				//
-				year, week := today.ISOWeek()
-				y, w := event.Start.ISOWeek()
-				newStart := event.Start.AddDate(year-y, 0, 7*(week-w))
-				event.Start = newStart
+				today_year, today_week := today.ISOWeek()
+				for {
+					event_year, event_week := event.Start.ISOWeek()
+					if today_year == event_year && today_week == event_week {
+						break
+					}
+					event.Start = event.Start.AddDate(0, 0, 7)
+				}
 			} else {
 				debug("summary = %q date expansion for rrule %q not implemented\n", summary, rrule.Value)
 			}
