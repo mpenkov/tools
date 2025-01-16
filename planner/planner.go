@@ -135,7 +135,12 @@ func query(
 					if today_year == event_year && today_week == event_week {
 						break
 					}
-					event.Start = event.Start.AddDate(0, 0, 7)
+
+					if event.Start.Sub(today).Seconds() > 0 {
+						event.Start = event.Start.AddDate(0, 0, -7)
+					} else {
+						event.Start = event.Start.AddDate(0, 0, 7)
+					}
 				}
 			} else {
 				debug("summary = %q date expansion for rrule %q not implemented\n", summary, rrule.Value)
