@@ -76,7 +76,7 @@ func vanillaCat(path string) error {
 	}
 	defer fin.Close()
 
-	if _, err := io.Copy(os.Stderr, fin); err != nil {
+	if _, err := io.Copy(os.Stdout, fin); err != nil {
 		return err
 	}
 
