@@ -69,6 +69,20 @@ func Suggest(prefix string) (candidates []string, err error) {
 	return candidates, nil
 }
 
+func vanillaCat(path string) error {
+	fin, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer fin.Close()
+
+	if _, err := io.Copy(os.Stderr, fin); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func Cat(rawUrl string) error {
 	if rawUrl == "-" {
 		_, err := io.Copy(os.Stdout, os.Stdin)
@@ -79,6 +93,8 @@ func Cat(rawUrl string) error {
 		return err
 	}
 	switch parsedUrl.Scheme {
+	case "":
+		return vanillaCat(rawUrl)
 	case "s3":
 		return s3_cat(rawUrl)
 	case "http":
