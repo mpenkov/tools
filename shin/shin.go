@@ -109,6 +109,7 @@ func ssh(userAtHost string, writeKnownHosts bool, sshArgs []string) error {
 		userAtHost,
 		"-i", *pemPath,
 		"-o", "StrictHostKeyChecking=no",
+		"-o", "LogLevel=ERROR",
 	}
 	if !writeKnownHosts {
 		params = append(params, "-o", "UserKnownHostsFile=/dev/null")
