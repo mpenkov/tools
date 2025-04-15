@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"time"
 
 	webdav "github.com/emersion/go-webdav"
@@ -125,7 +126,7 @@ func query(
 		event := Event{startTime, summary.Value}
 		if rrule != nil {
 			debug("event = %q name = %q value = %q\n", event, rrule.Name, rrule.Value)
-			if rrule.Value == "FREQ=WEEKLY" {
+			if strings.HasPrefix(rrule.Value, "FREQ=WEEKLY") {
 				//
 				// fast-forward the start time so that it occurs during this week
 				//
