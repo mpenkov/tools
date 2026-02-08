@@ -154,10 +154,10 @@ func resolve(host string, region string, profile string) (ip string, instance ec
 		)
 	}
 
-	if instance.Ipv6Address != nil {
-		return *instance.Ipv6Address, instance
-	} else if instance.PublicIpAddress != nil {
+	if instance.PublicIpAddress != nil {
 		return *instance.PublicIpAddress, instance
+	} else if instance.Ipv6Address != nil {
+		return *instance.Ipv6Address, instance
 	}
 
 	log.Fatalf("instance %s does not have an IP address", *instance.InstanceId)
